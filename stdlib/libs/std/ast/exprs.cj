@@ -1024,7 +1024,7 @@ public class ResumeExpr <: Expr {
                 case Some(v) =>
                     this.resume_ = v.resume_
                     this.expr_ = v.expr_
-                    this.with_ = with_
+                    this.with_ = v.with_
                     this.withExpr_ = v.withExpr_
                     this.throwing_ = v.throwing_
                     this.throwingExpr_ = v.throwingExpr_
