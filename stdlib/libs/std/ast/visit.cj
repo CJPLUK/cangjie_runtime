@@ -198,6 +198,8 @@ public abstract class Visitor {
 
     protected open func visit(_: CommandTypePattern): Unit {}
 
+    protected open func visit(_: ResumptionTypePattern): Unit {}
+
     protected open func visit(_: FeatureId): Unit {}
 
     protected open func visit(_: FeaturesDirective): Unit {}

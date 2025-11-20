@@ -510,6 +510,7 @@ enum PatternKind:int8 {
   EnumPattern,
   ExceptTypePattern,
   CommandTypePattern,
+  ResumptionTypePattern,
 }
 
 table Pattern {
