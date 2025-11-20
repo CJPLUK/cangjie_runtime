@@ -50,7 +50,6 @@ else
         -target ${TARGET} \
         -isysroot ${CMAKE_IOS_SDK_ROOT} \
         -Wl,-r,-rename_section,__TEXT,__text,__TEXT,__cjrt_text \
-        -Wl,-no_eh_labels \
         $obj \
         -o $obj;
     done
