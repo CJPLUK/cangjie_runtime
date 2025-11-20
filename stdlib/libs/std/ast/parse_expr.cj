@@ -309,6 +309,10 @@ func createResumeExpr(expr: NodeFormat_Expr): Expr {
         case None => throw ParseASTException()
     }
     var resume_ = Token(TokenKind.RESUME).addPosition(getNodeBeginPos(resumeExpr.GetBase()))
+    var expr_ = match (resumeExpr.GetExpr()) {
+        case Some(v) => Some(generateExprAST(resumeExpr.GetExpr()))
+        case None => None<Expr>
+    }
     var with_ = None<Token>
     var withExpr_ = None<Expr>
     match(resumeExpr.GetWithExpr()) {
@@ -325,7 +329,7 @@ func createResumeExpr(expr: NodeFormat_Expr): Expr {
             throwingExpr_ = Some(generateExprAST(resumeExpr.GetThrowingExpr()))
         case None => ()
     }
-    return ResumeExpr(resume_, with_, withExpr_, throwing_, throwingExpr_)
+    return ResumeExpr(resume_, expr_, with_, withExpr_, throwing_, throwingExpr_)
 }
 
 func createAssignExpr(expr: NodeFormat_Expr): Expr {
@@ -814,8 +818,12 @@ func createTryExpr(expr: NodeFormat_Expr, exprBase: NodeFormat_NodeBase): Expr {
         }
         var handle_ = Token(TokenKind.HANDLE).addPosition(fbHandler.GetHandlerPos())
         var commandPattern = generatePatternAST(fbHandler.GetCommandPattern())
+        var resumptionPattern = match (fbHandler.GetResumptionPattern()) {
+                                    case Some(v) => generatePatternAST(v)
+                                    case None => None<Pattern>
+                                }
         var handleBlock = generateBlock(fbHandler.GetHandleBlock())
-        var handler = Handler(handle_, commandPattern, handleBlock)
+        var handler = Handler(handle_, commandPattern, resumptionPattern, handleBlock)
         handlers.add(handler)
     }
     var finTk = Token()

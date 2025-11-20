@@ -998,8 +998,9 @@ public class PerformExpr <: Expr {
 }
 
 public class ResumeExpr <: Expr {
-    init(resume_: Token, with_: Option<Token>, withExpr_: Option<Expr>, throwing_: Option<Token>, throwingExpr_: Option<Expr>) {
+    init(resume_: Token, expr_: Option<Expr>, with_: Option<Token>, withExpr_: Option<Expr>, throwing_: Option<Token>, throwingExpr_: Option<Expr>) {
         this.resume_ = resume_
+        this.expr_ = expr_
         this.with_ = with_
         this.withExpr_ = withExpr_
         this.throwing_ = throwing_
@@ -1010,6 +1011,7 @@ public class ResumeExpr <: Expr {
             match (parseExpr(inputs) as ResumeExpr) {
                 case Some(v) =>
                     this.resume_ = v.resume_
+                    this.expr_ = v.expr_
                     this.with_ = v.with_
                     this.withExpr_ = v.withExpr_
                     this.throwing_ = v.throwing_
@@ -1028,6 +1030,7 @@ public class ResumeExpr <: Expr {
         super()
     }
     private var resume_: Token = Token(TokenKind.RESUME)
+    private var expr_: Option<Expr> = None<Expr>
     private var with_: Option<Token> = None<Token>
     private var withExpr_: Option<Expr> = None<Expr>
     private var throwing_: Option<Token> = None<Token>
@@ -1039,6 +1042,14 @@ public class ResumeExpr <: Expr {
         set(v) {
             checkTokenType(v, RESUME)
             resume_ = v
+        }
+    }
+    public mut prop expr: Option<Expr> {
+        get() {
+           expr_
+        }
+        set(v) {
+            expr_ = v
         }
     }
     public mut prop keywordW : Option<Token> {
@@ -1083,6 +1094,10 @@ public class ResumeExpr <: Expr {
     }
     public func toTokens(): Tokens {
         var tokens = Tokens().append(resume_)
+        match (expr_) {
+            case Some(v) => tokens.append(v.toTokens())
+            case None => ()
+        }
         match (with_) {
             case Some(v) => tokens.append(v)
             case None => ()
@@ -1107,6 +1122,10 @@ public class ResumeExpr <: Expr {
         if (v.needBreakTraverse()) {
             return
         }
+        match(expr_) {
+            case Some(node) => node.traverse(v)
+            case None => ()
+        }
         match(withExpr_) {
             case Some(node) => node.traverse(v)
             case None => ()
@@ -1125,6 +1144,12 @@ public class ResumeExpr <: Expr {
             currentIndent++
         }
         ret += getTokenIndent("-keywordR", resume_, currentIndent)
+        match(expr_) {
+            case Some(v) =>
+                ret += getIndent(currentIndent) + "-expr: "
+                ret += v.dump(currentIndent)
+            case None => ()
+        }
         match(with_) {
             case Some(v) => ret += getTokenIndent("-keywordW", v, currentIndent)
             case None => ()
@@ -3559,13 +3584,15 @@ public class IncOrDecExpr <: Expr {
 }
 
 public class Handler {
-    init(handle_: Token, commandPattern: Pattern, handleBlock: Block) {
+    init(handle_: Token, commandPattern: Pattern, resumptionPattern: Option<Pattern>, handleBlock: Block) {
         this.handle_ = handle_
         this.commandPattern_ = commandPattern
+        this.resumptionPattern_ = resumptionPattern
         this.handleBlock_ = handleBlock
     }
     internal var handle_: Token = Token(TokenKind.HANDLE)
     internal var commandPattern_: Pattern = Pattern()
+    internal var resumptionPattern_: Option<Pattern> = None<Pattern>
     internal var handleBlock_: Block = Block()
 }
 
@@ -3728,7 +3755,13 @@ public class TryExpr <: Expr {
         ret.remove(ret.size - 1)
         for (i in 0..handlers_.size) {
             let handle_ = handlers_[i].handle_
-            ret.append(handle_).append(Token(TokenKind.LPAREN)).append(handlers_[i].commandPattern_).append(Token(TokenKind.RPAREN)).append(handlers_[i].handleBlock_)
+            match (handlers_[i].resumptionPattern_) {
+                case Some(v) =>
+                    ret.append(handle_).append(Token(TokenKind.LPAREN)).append(handlers_[i].commandPattern_).append(Token(TokenKind.COMMA))
+                        .append(v).append(Token(TokenKind.RPAREN)).append(handlers_[i].handleBlock_)
+                case None =>
+                    ret.append(handle_).append(Token(TokenKind.LPAREN)).append(handlers_[i].commandPattern_).append(Token(TokenKind.RPAREN)).append(handlers_[i].handleBlock_)
+            }
         }
         if (!patterns_.isEmpty()) {
             for (i in 0..patterns_.size) {
@@ -3756,6 +3789,10 @@ public class TryExpr <: Expr {
         tryBlock_.traverse(v)
         for (handler_ in handlers_) {
             handler_.commandPattern_.traverse(v)
+            match (handler_.resumptionPattern_) {
+                case Some(t) => t.traverse(v)
+                case None => ()
+            }
             handler_.handleBlock_.traverse(v)
         }
         for (i in 0..patterns_.size) {
@@ -3787,6 +3824,12 @@ public class TryExpr <: Expr {
             ret += getTokenIndent("-keywordsH", handle_, currentIndent, index: i)
             ret += getIndent(currentIndent) + "-commandPattern: ${i}, "
             ret += handlers_[i].commandPattern_.dump(currentIndent)
+            match (handlers_[i].resumptionPattern_) {
+                case Some(t) =>
+                    ret += getIndent(currentIndent) + "-resumptionPattern: ${i}, "
+                    ret += t.dump(currentIndent)
+                case None => ()
+            }
             ret += getIndent(currentIndent) + "-handleBlocks: ${i}, "
             ret += handlers_[i].handleBlock_.dump(currentIndent)
         }

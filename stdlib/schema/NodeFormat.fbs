@@ -83,6 +83,7 @@ union AnyPattern {
   VAR_OR_ENUM_PATTERN: VarOrEnumPattern,
   TUPLE_PATTERN: TuplePattern,
   COMMAND_TYPE_PATTERN: CommandTypePattern,
+  RESUMPTION_TYPE_PATTERN: ResumptionTypePattern,
 }
 
 table Pattern {
@@ -115,6 +116,15 @@ table ExceptTypePattern {
 }
 
 table CommandTypePattern {
+  base: NodeBase;
+  pattern: Pattern;
+  pattern_pos: Position;
+  colon_pos: Position;
+  types: [Type];
+  bit_or_pos_vec: [Position];
+}
+
+table ResumptionTypePattern {
   base: NodeBase;
   pattern: Pattern;
   pattern_pos: Position;
@@ -411,6 +421,7 @@ table PerformExpr {
 
 table ResumeExpr {
   base: NodeBase;
+  expr: Expr;
   with_pos: Position;
   with_expr: Expr;
   throwing_pos: Position;
@@ -420,6 +431,7 @@ table ResumeExpr {
 table Handler {
   handler_pos: Position;
   command_pattern: Pattern;
+  resumption_pattern: Pattern;
   handle_block: Block;
 }
 

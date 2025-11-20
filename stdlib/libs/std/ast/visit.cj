@@ -197,5 +197,7 @@ public abstract class Visitor {
     protected open func visit(_: ResumeExpr): Unit {}
 
     protected open func visit(_: CommandTypePattern): Unit {}
+
+    protected open func visit(_: ResumptionTypePattern): Unit {}
 }
 

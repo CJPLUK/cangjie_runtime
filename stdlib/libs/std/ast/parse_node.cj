@@ -93,6 +93,7 @@ let PATTERN_LIST: Array<String> = [
     "type_pattern",
     "except_type_pattern",
     "effect_type_pattern",
+    "resumption_type_pattern",
     "wildcard_pattern"
 ]
 

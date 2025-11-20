@@ -70,6 +70,7 @@ func generatePatternAST(patternNode: Option<NodeFormat_Pattern>): Pattern {
         case "type_pattern" => createTypePattern(pattern)
         case "except_type_pattern" => createExceptTypePattern(pattern)
         case "effect_type_pattern" => createCommandTypePattern(pattern)
+        case "resumption_type_pattern" => createResumptionTypePattern(pattern)
         case "wildcard_pattern" => createWildcardPattern(pattern, nodeBase.GetBegin())
         case _ => throw ParseASTException("Unsupported parse the pattern node: ${astKind}.\n")
     }
@@ -156,6 +157,24 @@ func createCommandTypePattern(pattern: NodeFormat_Pattern): CommandTypePattern {
         bitOr.append(Token(TokenKind.BITOR).addPosition(pos))
     }
     return CommandTypePattern(p, colon, types, bitOr)
+}
+
+func createResumptionTypePattern(pattern: NodeFormat_Pattern): ResumptionTypePattern {
+    var resumptionTypePattern = match (pattern.GetPatternAsResumptionTypePattern()) {
+        case Some(v) => v
+        case None => throw ParseASTException("In createResumptionTypePattern function: get resumptionTypePattern")
+    }
+    var p = generatePatternAST(resumptionTypePattern.GetPattern())
+    var colon: Token = Token(TokenKind.COLON).addPosition(resumptionTypePattern.GetColonPos())
+    var types: ArrayList<TypeNode> = ArrayList<TypeNode>()
+    for (tp in resumptionTypePattern.GetTypes()) {
+        types.add(generateTypeAST(tp))
+    }
+    var bitOr = Tokens()
+    for (pos in resumptionTypePattern.GetBitOrPosVec()) {
+        bitOr.append(Token(TokenKind.BITOR).addPosition(pos))
+    }
+    return ResumptionTypePattern(p, colon, types, bitOr)
 }
 
 func createTypePattern(pattern: NodeFormat_Pattern): TypePattern {
