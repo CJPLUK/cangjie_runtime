@@ -209,6 +209,5 @@ public abstract class Visitor {
     protected open func visit(_: QuoteToken): Unit {}
 
     protected open func visit(_: MacroExpandParam): Unit {}
-    protected open func visit(_: ResumptionTypePattern): Unit {}
 }
 
