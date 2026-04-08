@@ -39,6 +39,22 @@ struct CJFuture {
     static constexpr size_t SYNC_OBJECT_SIZE = 168; // the size of future object with typeinfo header
 };
 
+struct CJTask {
+    void* klass;
+#ifdef __arm__
+    uint32_t padding;
+    uint32_t data[4];
+#else
+    long long int data[4]; // 4: occupied by result(1)/executeFn(2)/continuations
+#endif
+    std::atomic<std::uint_fast8_t> state;
+    std::atomic<std::int_fast8_t> isWaitQueueInit;
+    Waitqueue wq;
+    AtomicSpinLock spinLock;
+
+    static constexpr size_t SYNC_OBJECT_SIZE = 168; // the size of future object with typeinfo header
+};
+
 struct CJMutex {
     void* klass;
 #ifdef __arm__

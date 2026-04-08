@@ -30,7 +30,16 @@ extern "C" {
 #endif
 
 static constexpr int64_t INVALID_THREAD_ID = -1LL;
+// Bits for the CJTask `state`
+static constexpr std::uint_fast8_t FUTURE_COMPLETED_BIT = 0b10;
+static constexpr std::uint_fast8_t FUTURE_CONTINUATIONS_LOCK_BIT = 0b01;
+// Values for the CJTask `isWaitQueueInit`
+static constexpr std::int_fast8_t WQ_UNINITIALISED = 0;
+static constexpr std::int_fast8_t WQ_INITIALISED = 1;
+// Other thread initialising the wait queue:
+static constexpr std::int_fast8_t WQ_INITIALISING = -1;
 
+// PROBABLY NEEDS ADJUSTING TO ADD TASKS
 void ReleaseNativeResource(BaseObject* obj)
 {
     TypeInfo* typeInfo = obj->GetTypeInfo();
@@ -70,6 +79,14 @@ void MCC_FutureInit(void* ptr)
     MemorySet(reinterpret_cast<uintptr_t>(&future->spinLock), sizeof(AtomicSpinLock), 0, sizeof(AtomicSpinLock));
 }
 
+void MCC_TaskInit(void* ptr)
+{
+    CJTask* task = reinterpret_cast<CJTask*>(ptr);
+    task->state = 0;
+    task->isWaitQueueInit = WQ_UNINITIALISED;
+    MemorySet(reinterpret_cast<uintptr_t>(&task->spinLock), sizeof(AtomicSpinLock), 0, sizeof(AtomicSpinLock));
+}
+
 bool MCC_FutureIsComplete(void* ptr)
 {
     CJFuture* future = CastToT<CJFuture*>(ptr);
@@ -82,6 +99,18 @@ bool MCC_FutureIsComplete(void* ptr)
 #else
     return future->completeFlag.load();
 #endif
+}
+
+bool MCC_TaskIsComplete(void* ptr)
+{
+    CJTask* task = CastToT<CJTask*>(ptr);
+    bool res = task->state.load() & FUTURE_COMPLETED_BIT;
+#if defined(CANGJIE_TSAN_SUPPORT)
+    // if (res) {
+        // Sanitizer::TsanAcquire(future);
+    // }
+#endif
+    return res;
 }
 
 void MRT_FutureWait(const void* ptr, int64_t timeout)
@@ -124,6 +153,50 @@ void MRT_FutureWait(const void* ptr, int64_t timeout)
 #endif
 }
 
+void MRT_TaskWait(const void* ptr, int64_t timeout)
+{
+    CJTask* task = CastToT<CJTask*>(ptr);
+    if (task->state.load() & FUTURE_COMPLETED_BIT) {
+#if defined(CANGJIE_TSAN_SUPPORT)
+        // Sanitizer::TsanAcquire(future);
+#endif
+        return;
+    }
+    constexpr int newWaitQueueMaxTimes = 32;
+    for (int i = 0;;) {
+        if (i > newWaitQueueMaxTimes) {
+            LOG(RTLOG_ERROR, "FutureWait timeout failed.");
+            break;
+        }
+        int_fast8_t oldWaitQueue = task->isWaitQueueInit.load();
+        if (oldWaitQueue == WQ_INITIALISING) {
+            continue;
+        }
+        if (oldWaitQueue == WQ_INITIALISED) {
+            break;
+        }
+
+        if (task->isWaitQueueInit.compare_exchange_weak(oldWaitQueue, WQ_INITIALISING)) {
+            if (MRT_NewWaitQueue(reinterpret_cast<void*>(&task->wq)) != 0) {
+                LOG(RTLOG_ERROR, "waitqueue init failed!\n");
+                task->isWaitQueueInit.store(WQ_UNINITIALISED);
+                ++i;
+                continue;
+            }
+            task->isWaitQueueInit.store(WQ_INITIALISED);
+            break;
+        }
+    }
+
+    Heap::GetHeap().GetCollector().AddRawPointerObject(reinterpret_cast<BaseObject*>(task));
+    MRT_SuspendWithTimeout(&task->wq, MCC_TaskIsComplete, task, timeout);
+    Heap::GetHeap().GetCollector().RemoveRawPointerObject(reinterpret_cast<BaseObject*>(task));
+
+#if defined(CANGJIE_TSAN_SUPPORT)
+    // Sanitizer::TsanAcquire(future);
+#endif
+}
+
 void MCC_FutureNotifyAll(const void* ptr)
 {
     CJFuture* future = CastToT<CJFuture*>(ptr);
@@ -139,6 +212,55 @@ void MCC_FutureNotifyAll(const void* ptr)
     }
 
     MRT_ResumeAll(&future->wq, NULL, future);
+}
+
+void MCC_TaskNotifyAll(const void* ptr)
+{
+    CJTask* task = CastToT<CJTask*>(ptr);
+    // Maybe add a limit here, or yield?
+    uint_fast8_t expectedState = 0b00;
+    while (!task->state.compare_exchange_weak(expectedState, FUTURE_COMPLETED_BIT)) {
+        expectedState = 0b00;
+    }
+    int waitQueue = task->isWaitQueueInit.load();
+    // Waitqueue hasn't been created or is being created.
+    if (waitQueue == WQ_UNINITIALISED || waitQueue == WQ_INITIALISING) {
+	// In this case there are not any waiting threads (from `.get()`),
+	// or maybe the first one is just about to attempt to park itself in
+	// the wait queue however this will skip because of the callback passed
+	// to `MRT_SuspendWithTimeout`.
+        return;
+    }
+
+    MRT_ResumeAll(&task->wq, NULL, task);
+}
+
+void MCC_TaskNotifyEndThread(const void* ptr) {
+    CJTask* task = CastToT<CJTask*>(ptr);
+    // This function will be called just before the cjthread completes.
+#if defined(CANGJIE_TSAN_SUPPORT)
+    // Sanitizer::TsanRelease(future, Sanitizer::ReleaseType::K_RELEASE_MERGE);
+#endif
+}
+
+bool MRT_TaskLockContinuationsOrAlreadyComplete(const void* ptr) {
+    CJTask* task = CastToT<CJTask*>(ptr);
+    while(true) { // maybe add limit or yield
+        auto oldState = task->state.fetch_or(FUTURE_CONTINUATIONS_LOCK_BIT);
+        if (oldState == 0b11) {
+            // The future was already complete
+            return false;
+        }
+        if (oldState == 0b00) {
+            // Was not already locked
+            return true;
+        }
+    }
+}
+
+void MRT_TaskUnlockContinuations(const void* ptr) {
+    CJTask* task = CastToT<CJTask*>(ptr);
+    task->state = 0b00;
 }
 
 int MCC_MutexInit(void* ptr)

@@ -225,6 +225,7 @@ unwindPCForC2RStubStart:
     CalleeSavedRegistersStub CJ_SchedulePreemptCheck CJ_SchedulePreemptCheckStub
     CalleeSavedRegistersStub MCC_AcquireRawData CJ_MCC_AcquireRawData
     CalleeSavedRegistersStub MRT_FutureWait CJ_MCC_FutureWait
+    CalleeSavedRegistersStub MRT_TaskWait CJ_MCC_TaskWait
     CalleeSavedRegistersStub MCC_MutexLock CJ_MCC_MutexLock
     CalleeSavedRegistersStub MCC_MutexLockSlowPath CJ_MCC_MutexLockSlowPath
     CalleeSavedRegistersStub MCC_MonitorWait CJ_MCC_MonitorWait

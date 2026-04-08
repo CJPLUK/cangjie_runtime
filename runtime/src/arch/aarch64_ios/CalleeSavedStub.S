@@ -275,6 +275,12 @@ _CJ_MCC_FutureWait:
 
     .text
     .align 2
+    .global _CJ_MCC_TaskWait
+_CJ_MCC_TaskWait:
+    CalleeSavedRegistersStub MRT_TaskWait
+
+    .text
+    .align 2
     .global _CJ_MCC_MutexLock
 _CJ_MCC_MutexLock:
     CalleeSavedRegistersStub MCC_MutexLock
