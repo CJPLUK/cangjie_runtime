@@ -6,33 +6,33 @@
  * See https://cangjie-lang.cn/pages/LICENSE for license information.
  */
 
-package std.core
+package std.sync
+
+import std.collections.ArrayList
 
 @Intrinsic
-func futureInit<T, I>(future: Future<T, I>): Unit
+func taskInit<T, I>(task: Task<T, I>): Unit
 
 @Intrinsic
-func futureIsComplete<T, I>(future: Future<T, I>): Bool
+func taskIsComplete<T, I>(task: Task<T, I>): Bool
 
 @Intrinsic
-func futureWait<T, I>(future: Future<T, I>, timeout: Int64): Unit
+func taskWait<T, I>(task: Task<T, I>, timeout: Int64): Unit
 
 @Intrinsic
-func futureNotifyAll<T, I>(future: Future<T, I>): Unit
+func taskNotifyAll<T, I>(task: Task<T, I>): Unit
 
 @Intrinsic
-func futureLockContinuationsOrAlreadyComplete<T, I>(future: Future<T, I>): Bool
+func taskLockContinuationsOrAlreadyComplete<T, I>(task: Task<T, I>): Bool
 
 @Intrinsic
-func futureUnlockContinuations<T, I>(future: Future<T, I>): Unit
+func taskUnlockContinuations<T, I>(task: Task<T, I>): Unit
 
 @Intrinsic
-func futureNotifyEndThread<T, I>(future: Future<T, I>): Unit
+func taskNotifyEndThread<T, I>(task: Task<T, I>): Unit
 
 @FastNative
 foreign func CJ_CORE_PrintOomHint(): Unit
-
-let INT64_MAX: Int64 = 0x7fff_ffff_ffff_ffffi64
 
 internal enum TaskState<T> {
     | Pending
@@ -110,33 +110,25 @@ protected class RunnableContinuation<I> <: ContinuousInlineExecution {
     }
 }
 
-public class Future<T, I> <: Takes<I> {
+public class Task<I, T> <: Takes<I> {
     // `_thread` must be the first field,
     // it will be accessed when spawning a runtime cj thread.
     private var state: TaskState<T> = Pending
-    private let bindThread: Bool
     private var executeFn: (I) -> T
-    private var nextContinuations: Array<Takes<T>> = Array<Takes<T>>()
-
-    private init(fn: () -> T) {
-        this.bindThread = true
-        this.executeFn = { _ => fn() }
-        unsafe { futureInit(this) }
-    }
+    private var nextContinuations: ArrayList<Takes<T>> = ArrayList<Takes<T>>()
 
     init(fn: (I) -> T) {
-        this.bindThread = false
         this.executeFn = fn
-        unsafe { futureInit(this) }
+        unsafe { taskInit(this) }
     }
 
     /**
      * Blocking the current thread,
-     * waiting for the result of the thread corresponding to this Future object.
+     * waiting for the result of the thread corresponding to this Task object.
      * @throws Exception or Error if an exception occurs in the corresponding thread.
      */
     public func get(): T {
-        unsafe { futureWait(this, Int64.Max) }
+        unsafe { taskWait(this, Int64.Max) }
         match (state) {
             case Pending => get()
             case Completed(outcome) => outcome.unwrapOrThrow()
@@ -149,19 +141,19 @@ public class Future<T, I> <: Takes<I> {
      * @throws Exception or Error if an exception occurs in the corresponding thread.
      */
     public func tryGet(): Option<T> {
-        let isComplete = unsafe { futureIsComplete(this) }
+        let isComplete = unsafe { taskIsComplete(this) }
         if (!isComplete) {
-            return Option<T>.None
+            return None
         }
         match (state) {
-            case Pending => Option<T>.None
+            case Pending => None
             case Completed(outcome) => outcome.unwrapOrThrow()
         }
     }
 
     /**
      * Blocking the current thread,
-     * waiting for the result of the thread corresponding to this Future object.
+     * waiting for the result of the thread corresponding to this Task object.
      * If the corresponding thread has not completed execution within `ns` nanoseconds,
      * the method will return `Option<T>.None`.
      * If `ns <= 0`, same as `get()`.
@@ -172,9 +164,9 @@ public class Future<T, I> <: Takes<I> {
             return get()
         }
         // Wait for `ns` nanoseconds
-        unsafe { futureWait(this, timeout.toNanoseconds()) }
-        // Check whether the future is complete
-        let isCompleteAfterWait = unsafe { futureIsComplete(this) }
+        unsafe { taskWait(this, timeout.toNanoseconds()) }
+        // Check whether the task is complete
+        let isCompleteAfterWait = unsafe { taskIsComplete(this) }
         if (!isCompleteAfterWait) {
             throw TimeoutException()
         }
@@ -200,7 +192,7 @@ public class Future<T, I> <: Takes<I> {
             Fail(Errored(er))
         }
         state = Completed(outcome)
-        unsafe { futureNotifyAll(this) } // wake up the `.get()` threads
+        unsafe { taskNotifyAll(this) } // wake up the `.get()` threads
         // Now this only thread which can (should) access nextContinuations
         match (outcome) {
             case Success(output) =>
@@ -208,7 +200,7 @@ public class Future<T, I> <: Takes<I> {
                     let out = RunnableContinuation(nextContinuations[0], output)
                     for (i in 1..nextContinuations.size) {
                         spawn {
-                            nextContinuations[i].execute(output)
+                            RunnableContinuation(nextContinuations[i], output).executeContinuously()
                         }
                     }
                     return out
@@ -221,7 +213,7 @@ public class Future<T, I> <: Takes<I> {
     // assumes NOT already notified
     protected func propagateFailure(fail: Failure): Unit {
         state = Completed(Fail(fail))
-        unsafe { futureNotifyAll(this) } // wake up the `.get()` threads
+        unsafe { taskNotifyAll(this) } // wake up the `.get()` threads
         propagateFailureInner(fail)
     }
 
@@ -232,23 +224,6 @@ public class Future<T, I> <: Takes<I> {
         }
     }
 
-    internal func appendContinuation(next: Takes<T>): Unit {
-        nextContinuations = nextContinuations.concat(Array<Takes<T>>(1, {_ => next}))
-    }
-
-    internal func getCompletedOutput(): T {
-        match (state) {
-            case Completed(outcome) => outcome.unwrapOrThrow()
-            case Pending => throw IllegalStateException("Future should be completed")
-        }
-    }
-
-    internal func executeInline(input: I): Unit {
-        RunnableContinuation(this, input).executeContinuously()
-        unsafe { futureNotifyEndThread(this) }
-        return
-    }
-
     // internal func requestCancellation(): Unit {
         // this._thread.setCancellationRequest()
     // }
@@ -256,92 +231,22 @@ public class Future<T, I> <: Takes<I> {
     // internal func getThread(): Thread {
         // _thread
     // }
-
-    internal func executeAsSpawnRoot(input: I): Unit {
-        if (bindThread) {
-            this._thread.waitForCJThreadHandle()
-            setThreadObject(this._thread)
-        }
-
-        executeInline(input)
-
-        if (bindThread) {
-            this._thread.clearRuntimeCJThreadHandle()
-        }
-    }
 }
 
-extend<T, I> Future<T, I> {
-    public func then<U>(fn: (T) -> U): Future<U, T> {
-        let next = Future<U, T>(fn)
+extend<I, T> Task<I, T> {
+    public func then<U>(fn: (T) -> U): Task<T, U> {
+        let next = Task<U, T>(fn)
         let taken: Takes<T> = next
-        if (unsafe { futureLockContinuationsOrAlreadyComplete(this) }) {
+        if (unsafe { taskLockContinuationsOrAlreadyComplete(this) }) {
             this.appendContinuation(taken)
-            unsafe { futureUnlockContinuations(this) }
+            unsafe { taskUnlockContinuations(this) }
         } else {
-            let output = this.getCompletedOutput()
+            let output = state.getOrThrow().unwrapOrThrow()
             spawn {
-                next.executeInline(output)
+                RunnableContinuation(next, output).executeContinuously()
             }
         }
         return next
     }
 }
 
-extend<T> Future<T, Unit> {
-    public prop thread: Thread {
-        get() {
-            this.getThread()
-        }
-    }
-
-    /**
-     * Mark the current future as cancelled.
-     * Send a termination request to its executing thread.
-     */
-    public func cancel(): Unit {
-        this.requestCancellation()
-    }
-
-    /**
-     * Execute the task (thread) and set its result.
-     * This method is the entry function of a new thread with a future,
-     * and it will be used by CodeGen directly and passed to Cangjie runtime.
-     ** BE AWARE OF: **
-     * This method is tied to the runtime implementation details,
-     * and if you want to make any changes, you should consider
-     * whether you need to update the runtime implementation as well.
-     */
-    func execute(): Unit {
-        this.executeAsSpawnRoot(unsafe { zeroValue<Unit>() })
-    }
-
-    // ** BE AWARE OF: **
-    // This method is tied to the runtime implementation details,
-    // and if you want to make any changes, you should consider
-    // whether you need to update the runtime implementation as well..
-    static func executeClosure(fn: () -> T): Unit {
-        try {
-            fn()
-        } catch (ex: Exception) {
-            handleException(ex)
-        } catch (_: OutOfMemoryError) {
-            eprintln("An exception has occurred:")
-            eprintln("    Out of memory")
-        } catch (er: Error) {
-            er.printStackTrace()
-        }
-        return
-    }
-
-}
-
-/**
- * The optional argument type of the `spawn` expression.
- * Specific derived types of `ThreadContext` could affect the behavior of the thread at runtime.
- * Only for `MainThreadContext` by now.
- */
-public interface ThreadContext {
-    func end(): Unit
-    func hasEnded(): Bool
-}
