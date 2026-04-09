@@ -32,7 +32,7 @@ func taskNotifyEndThread<T, I>(task: Task<T, I>): Unit
 @FastNative
 foreign func CJ_CORE_PrintOomHint(): Unit
 
-private class NextContinuations<T> {
+internal class NextContinuations<T> {
     public var elements: Array<Takes<T>> = Array<Takes<T>>(4, repeat: DummyContinuation())
     public var size = 0
 
@@ -131,9 +131,9 @@ public class Task<I, T> <: Takes<I> {
     // it will be accessed when spawning a runtime cj thread.
     internal var state: TaskState<T> = Pending
     private var executeFn: (I) -> T
-    private var nextContinuations = NextContinuations<Takes<T>>()
+    internal var nextContinuations = NextContinuations<T>()
 
-    init(fn: (I) -> T) {
+    public Task(fn: (I) -> T) {
         this.executeFn = fn
         unsafe { taskInit(this) }
     }
@@ -210,10 +210,10 @@ public class Task<I, T> <: Takes<I> {
         match (outcome) {
             case Success(output) =>
                 if (nextContinuations.size > 0) {
-                    let out = RunnableContinuation(nextContinuations.elements[0], output)
+                    let out = RunnableContinuation<T>(nextContinuations.elements[0], output)
                     for (i in 1..nextContinuations.size) {
                         spawn {
-                            RunnableContinuation(nextContinuations.elements[i], output).executeContinuously()
+                            RunnableContinuation<T>(nextContinuations.elements[i], output).executeContinuously()
                         }
                     }
                     return out
