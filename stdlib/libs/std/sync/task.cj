@@ -8,8 +8,6 @@
 
 package std.sync
 
-import std.collections.ArrayList
-
 @Intrinsic
 func taskInit<T, I>(task: Task<T, I>): Unit
 
@@ -33,6 +31,27 @@ func taskNotifyEndThread<T, I>(task: Task<T, I>): Unit
 
 @FastNative
 foreign func CJ_CORE_PrintOomHint(): Unit
+
+private class NextContinuations<T> {
+    public var elements: Array<Takes<T>> = Array(4, repeat: DummyContinuation())
+    public var size = 0
+
+    public add(elem: Takes<T>): Unit {
+        if (size >= elements.size) {
+            elements = elements.concat(Array(elements.size, repeat: DummyContinuation()))
+        }
+        elements[size] = elem
+        size++
+    }
+}
+
+private class DummyContinuation {}
+
+extend<T> DummyContinuation <: Takes<T> {
+    protected func next(arg: T): ?ContinuousInlineExecution { None }
+    protected func propagateFailure(fail: Failure): {}
+    protected func execute(arg: T): Unit {}
+}
 
 internal enum TaskState<T> {
     | Pending
@@ -113,9 +132,9 @@ protected class RunnableContinuation<I> <: ContinuousInlineExecution {
 public class Task<I, T> <: Takes<I> {
     // `_thread` must be the first field,
     // it will be accessed when spawning a runtime cj thread.
-    private var state: TaskState<T> = Pending
+    protected var state: TaskState<T> = Pending
     private var executeFn: (I) -> T
-    private var nextContinuations: ArrayList<Takes<T>> = ArrayList<Takes<T>>()
+    private var nextContinuations = NextContinuations<Takes<T>>()
 
     init(fn: (I) -> T) {
         this.executeFn = fn
@@ -171,7 +190,7 @@ public class Task<I, T> <: Takes<I> {
             throw TimeoutException()
         }
         match (state) {
-            case Pending => return get() // maybe throw
+            case Pending => return get()
             case Completed(outcome) => return outcome.unwrapOrThrow()
         }
     }
@@ -180,15 +199,12 @@ public class Task<I, T> <: Takes<I> {
         let outcome: TaskOutcome<T> = try {
             Success(executeFn(input))
         } catch (ex: Exception) {
-            handleException(ex)
             Fail(Excepted(ex))
         } catch (er: OutOfMemoryError) {
             unsafe { CJ_CORE_PrintOomHint() }
-            handleError(er)
             Fail(Errored(er))
         } catch (er: Error) {
             er.printStackTrace()
-            handleError(er)
             Fail(Errored(er))
         }
         state = Completed(outcome)
@@ -197,10 +213,10 @@ public class Task<I, T> <: Takes<I> {
         match (outcome) {
             case Success(output) =>
                 if (nextContinuations.size > 0) {
-                    let out = RunnableContinuation(nextContinuations[0], output)
+                    let out = RunnableContinuation(nextContinuations.elements[0], output)
                     for (i in 1..nextContinuations.size) {
                         spawn {
-                            RunnableContinuation(nextContinuations[i], output).executeContinuously()
+                            RunnableContinuation(nextContinuations.elements[i], output).executeContinuously()
                         }
                     }
                     return out
@@ -220,7 +236,7 @@ public class Task<I, T> <: Takes<I> {
     // assumes already notified
     private func propagateFailureInner(fail: Failure): Unit {
         for (i in 0..nextContinuations.size) {
-            nextContinuations[i].propagateFailure(fail)
+            nextContinuations.elements[i].propagateFailure(fail)
         }
     }
 
@@ -235,13 +251,16 @@ public class Task<I, T> <: Takes<I> {
 
 extend<I, T> Task<I, T> {
     public func then<U>(fn: (T) -> U): Task<T, U> {
-        let next = Task<U, T>(fn)
+        let next = Task<T, U>(fn)
         let taken: Takes<T> = next
         if (unsafe { taskLockContinuationsOrAlreadyComplete(this) }) {
             this.appendContinuation(taken)
             unsafe { taskUnlockContinuations(this) }
         } else {
-            let output = state.getOrThrow().unwrapOrThrow()
+            let output = match (this.state) {
+                case Completed(outcome) => outcome.unwrapOrThrow()
+                case Pending => throw IllegalStateException("Task is not complete")
+            }
             spawn {
                 RunnableContinuation(next, output).executeContinuously()
             }
@@ -249,4 +268,3 @@ extend<I, T> Task<I, T> {
         return next
     }
 }
-
