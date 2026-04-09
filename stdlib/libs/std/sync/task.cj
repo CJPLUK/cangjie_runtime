@@ -33,24 +33,16 @@ func taskNotifyEndThread<T, I>(task: Task<T, I>): Unit
 foreign func CJ_CORE_PrintOomHint(): Unit
 
 private class NextContinuations<T> {
-    public var elements: Array<Takes<T>> = Array(4, repeat: DummyContinuation())
+    public var elements: Array<Takes<T>> = Array<Takes<T>>(4, repeat: DummyContinuation())
     public var size = 0
 
-    public add(elem: Takes<T>): Unit {
+    public func add(elem: Takes<T>): Unit {
         if (size >= elements.size) {
-            elements = elements.concat(Array(elements.size, repeat: DummyContinuation()))
+            elements = elements.concat(Array<Takes<T>>(elements.size, repeat: DummyContinuation<T>()))
         }
         elements[size] = elem
         size++
     }
-}
-
-private class DummyContinuation {}
-
-extend<T> DummyContinuation <: Takes<T> {
-    protected func next(arg: T): ?ContinuousInlineExecution { None }
-    protected func propagateFailure(fail: Failure): {}
-    protected func execute(arg: T): Unit {}
 }
 
 internal enum TaskState<T> {
@@ -93,6 +85,11 @@ protected abstract class Takes<I> {
     }
 }
 
+class DummyContinuation<T> <: Takes<T> {
+    protected func next(arg: T): ?ContinuousInlineExecution { None }
+    protected func propagateFailure(fail: Failure): Unit {}
+}
+
 // Abstract class with no generic parameters necessary to perform
 // the runtime polymorphism in `launch` to loop through successive
 // continuations regardless of their input/output types.
@@ -132,7 +129,7 @@ protected class RunnableContinuation<I> <: ContinuousInlineExecution {
 public class Task<I, T> <: Takes<I> {
     // `_thread` must be the first field,
     // it will be accessed when spawning a runtime cj thread.
-    protected var state: TaskState<T> = Pending
+    internal var state: TaskState<T> = Pending
     private var executeFn: (I) -> T
     private var nextContinuations = NextContinuations<Takes<T>>()
 
@@ -254,7 +251,7 @@ extend<I, T> Task<I, T> {
         let next = Task<T, U>(fn)
         let taken: Takes<T> = next
         if (unsafe { taskLockContinuationsOrAlreadyComplete(this) }) {
-            this.appendContinuation(taken)
+            this.nextContinuations.add(taken)
             unsafe { taskUnlockContinuations(this) }
         } else {
             let output = match (this.state) {
