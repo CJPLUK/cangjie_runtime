@@ -50,9 +50,6 @@ struct CJTask {
     std::atomic<std::uint_fast8_t> state;
     std::atomic<std::int_fast8_t> isWaitQueueInit;
     Waitqueue wq;
-    AtomicSpinLock spinLock;
-
-    static constexpr size_t SYNC_OBJECT_SIZE = 168; // the size of future object with typeinfo header
 };
 
 struct CJMutex {

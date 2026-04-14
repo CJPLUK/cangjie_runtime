@@ -132,6 +132,7 @@ public class Task<I, T> <: Takes<I> {
     internal var state: TaskState<T> = Pending
     private var executeFn: (I) -> T
     internal var nextContinuations = NextContinuations<T>()
+    public var padding = VArray<Int64, $15>(repeat: 0)
 
     public Task(fn: (I) -> T) {
         this.executeFn = fn
@@ -265,3 +266,12 @@ extend<I, T> Task<I, T> {
         return next
     }
 }
+
+public func task<T>(f: () -> T): Task<Unit, T> {
+    let output = Task<Unit, T> { _ => f() }
+    spawn {
+        RunnableContinuation<Unit>(output, ()).executeContinuously()
+    }
+    output
+}
+

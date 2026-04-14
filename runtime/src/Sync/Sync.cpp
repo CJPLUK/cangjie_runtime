@@ -84,7 +84,6 @@ void MCC_TaskInit(void* ptr)
     CJTask* task = reinterpret_cast<CJTask*>(ptr);
     task->state = 0;
     task->isWaitQueueInit = WQ_UNINITIALISED;
-    MemorySet(reinterpret_cast<uintptr_t>(&task->spinLock), sizeof(AtomicSpinLock), 0, sizeof(AtomicSpinLock));
 }
 
 bool MCC_FutureIsComplete(void* ptr)
@@ -104,7 +103,7 @@ bool MCC_FutureIsComplete(void* ptr)
 bool MCC_TaskIsComplete(void* ptr)
 {
     CJTask* task = CastToT<CJTask*>(ptr);
-    bool res = task->state.load() & FUTURE_COMPLETED_BIT;
+    bool res = !!(task->state.load() & FUTURE_COMPLETED_BIT);
 #if defined(CANGJIE_TSAN_SUPPORT)
     // if (res) {
         // Sanitizer::TsanAcquire(future);
@@ -221,6 +220,7 @@ void MCC_TaskNotifyAll(const void* ptr)
     uint_fast8_t expectedState = 0b00;
     while (!task->state.compare_exchange_weak(expectedState, FUTURE_COMPLETED_BIT)) {
         expectedState = 0b00;
+        CJThreadTryResched();
     }
     int waitQueue = task->isWaitQueueInit.load();
     // Waitqueue hasn't been created or is being created.
@@ -255,6 +255,7 @@ bool MRT_TaskLockContinuationsOrAlreadyComplete(const void* ptr) {
             // Was not already locked
             return true;
         }
+        CJThreadTryResched();
     }
 }
 
