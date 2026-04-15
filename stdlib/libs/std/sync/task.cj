@@ -145,6 +145,12 @@ public class Task<I, T> <: Takes<I> {
      * @throws Exception or Error if an exception occurs in the corresponding thread.
      */
     public func get(): T {
+        if ( unsafe { taskIsComplete(this) } ) {
+            match (state) {
+                case Pending => throw IllegalStateException("Task must be complete at this point")
+                case Completed(outcome) => outcome.unwrapOrThrow()
+            }
+        }
         unsafe { taskWait(this, Int64.Max) }
         match (state) {
             case Pending => get()
@@ -274,4 +280,3 @@ public func task<T>(f: () -> T): Task<Unit, T> {
     }
     output
 }
-

@@ -216,23 +216,21 @@ void MCC_FutureNotifyAll(const void* ptr)
 void MCC_TaskNotifyAll(const void* ptr)
 {
     CJTask* task = CastToT<CJTask*>(ptr);
-    // Maybe add a limit here, or yield?
-    uint_fast8_t expectedState = 0b00;
-    while (!task->state.compare_exchange_weak(expectedState, FUTURE_COMPLETED_BIT)) {
-        expectedState = 0b00;
-        CJThreadTryResched();
-    }
+    // Mark as complete
+    task->state.fetch_or(FUTURE_COMPLETED_BIT);
     int waitQueue = task->isWaitQueueInit.load();
     // Waitqueue hasn't been created or is being created.
-    if (waitQueue == WQ_UNINITIALISED || waitQueue == WQ_INITIALISING) {
-	// In this case there are not any waiting threads (from `.get()`),
-	// or maybe the first one is just about to attempt to park itself in
-	// the wait queue however this will skip because of the callback passed
-	// to `MRT_SuspendWithTimeout`.
-        return;
+    if (waitQueue != WQ_UNINITIALISED && waitQueue != WQ_INITIALISING) {
+        // In the edge case where it is "initializing", the attempt to park
+        // on the waitQueue will fail because of the final callback to check
+        // that the future is not completed (so then that thread will not
+        // need to be resumed, because it will not be parked).
+        MRT_ResumeAll(&task->wq, NULL, task);
     }
 
-    MRT_ResumeAll(&task->wq, NULL, task);
+    while (task->state.load() & FUTURE_CONTINUATIONS_LOCK_BIT) {
+        CJThreadTryResched();
+    }
 }
 
 void MCC_TaskNotifyEndThread(const void* ptr) {
@@ -245,23 +243,26 @@ void MCC_TaskNotifyEndThread(const void* ptr) {
 
 bool MRT_TaskLockContinuationsOrAlreadyComplete(const void* ptr) {
     CJTask* task = CastToT<CJTask*>(ptr);
-    while(true) { // maybe add limit or yield
-        auto oldState = task->state.fetch_or(FUTURE_CONTINUATIONS_LOCK_BIT);
-        if (oldState == 0b11) {
-            // The future was already complete
-            return false;
-        }
-        if (oldState == 0b00) {
-            // Was not already locked
+    while(true) {
+        uint_fast8_t expected = 0b00;
+        uint_fast8_t desired = 0b01;
+        if (task->state.compare_exchange_strong(expected, desired)) {
+            // The future was successfully locked
             return true;
         }
-        CJThreadTryResched();
+        if (expected == 0b01) {
+            // Was already locked
+            CJThreadTryResched();
+        } else {
+            // must be completed
+            return false;
+        }
     }
 }
 
 void MRT_TaskUnlockContinuations(const void* ptr) {
     CJTask* task = CastToT<CJTask*>(ptr);
-    task->state = 0b00;
+    task->state.fetch_and(FUTURE_COMPLETED_BIT);
 }
 
 int MCC_MutexInit(void* ptr)
