@@ -7,6 +7,7 @@
  */
 
 package std.sync
+import std.time.*
 
 @Intrinsic
 func taskInit<T, I>(task: Task<T, I>): Unit
@@ -15,13 +16,16 @@ func taskInit<T, I>(task: Task<T, I>): Unit
 func taskIsComplete<T, I>(task: Task<T, I>): Bool
 
 @Intrinsic
+func taskContinuationsAreLocked<T, I>(task: Task<T, I>): Bool
+
+@Intrinsic
 func taskWait<T, I>(task: Task<T, I>, timeout: Int64): Unit
 
 @Intrinsic
 func taskNotifyAll<T, I>(task: Task<T, I>): Unit
 
 @Intrinsic
-func taskLockContinuationsOrAlreadyComplete<T, I>(task: Task<T, I>): Bool
+func taskLockContinuationsOrAlreadyComplete<T, I>(task: Task<T, I>): Int64
 
 @Intrinsic
 func taskUnlockContinuations<T, I>(task: Task<T, I>): Unit
@@ -213,6 +217,9 @@ public class Task<I, T> <: Takes<I> {
         }
         state = Completed(outcome)
         unsafe { taskNotifyAll(this) } // wake up the `.get()` threads
+        while (unsafe { taskContinuationsAreLocked(this) }) {
+            sleep(Duration.Zero)
+        }
         // Now this only thread which can (should) access nextContinuations
         match (outcome) {
             case Success(output) =>
@@ -257,17 +264,25 @@ extend<I, T> Task<I, T> {
     public func then<U>(fn: (T) -> U): Task<T, U> {
         let next = Task<T, U>(fn)
         let taken: Takes<T> = next
-        if (unsafe { taskLockContinuationsOrAlreadyComplete(this) }) {
-            this.nextContinuations.add(taken)
-            unsafe { taskUnlockContinuations(this) }
-        } else {
-            let output = match (this.state) {
-                case Completed(outcome) => outcome.unwrapOrThrow()
-                case Pending => throw IllegalStateException("Task is not complete")
+        while (true) {
+            let ret = unsafe { taskLockContinuationsOrAlreadyComplete(this) }
+            if (ret == 1) {
+                this.nextContinuations.add(taken)
+                unsafe { taskUnlockContinuations(this) }
+                break
             }
-            spawn {
-                RunnableContinuation(next, output).executeContinuously()
+            if (ret == 0) {
+                let output = match (this.state) {
+                    case Completed(outcome) => outcome.unwrapOrThrow()
+                    case Pending => throw IllegalStateException("Task is not complete")
+                }
+                spawn {
+                    RunnableContinuation(next, output).executeContinuously()
+                }
+                break
             }
+            // otherwise it's been locked by another cjthread
+            sleep(Duration.Zero)
         }
         return next
     }

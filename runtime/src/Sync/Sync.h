@@ -47,8 +47,8 @@ struct CJTask {
 #else
     long long int data[4]; // 4: occupied by result(1)/executeFn(2)/continuations
 #endif
-    std::atomic<std::uint_fast8_t> state;
-    std::atomic<std::int_fast8_t> isWaitQueueInit;
+    std::atomic<uint_fast8_t> state;
+    std::atomic<int_fast8_t> isWaitQueueInit;
     Waitqueue wq;
 };
 
