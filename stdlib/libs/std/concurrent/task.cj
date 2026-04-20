@@ -6,8 +6,7 @@
  * See https://cangjie-lang.cn/pages/LICENSE for license information.
  */
 
-package std.sync
-import std.time.*
+package std.concurrent
 
 @Intrinsic
 func taskInit<T, I>(task: Task<T, I>): Unit
@@ -78,7 +77,6 @@ protected abstract class Takes<I> {
     // Run Continuation body inline, and return a
     // handle which allows running the first dependent
     // continuation which its output
-    // (and launches the others automatically)
     protected func next(arg: I): ?ContinuousInlineExecution
     // Set the state of all dependents (recursively) to the failure
     // and notify completion.
