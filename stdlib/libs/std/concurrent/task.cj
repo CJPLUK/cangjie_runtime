@@ -9,28 +9,28 @@
 package std.concurrent
 
 @Intrinsic
-func taskInit<T, I>(task: Task<T, I>): Unit
+func taskInit<T>(task: Task<T>): Unit
 
 @Intrinsic
-func taskIsComplete<T, I>(task: Task<T, I>): Bool
+func taskIsComplete<T>(task: Task<T>): Bool
 
 @Intrinsic
-func taskContinuationsAreLocked<T, I>(task: Task<T, I>): Bool
+func taskContinuationsAreLocked<T>(task: Task<T>): Bool
 
 @Intrinsic
-func taskWait<T, I>(task: Task<T, I>, timeout: Int64): Unit
+func taskWait<T>(task: Task<T>, timeout: Int64): Unit
 
 @Intrinsic
-func taskNotifyAll<T, I>(task: Task<T, I>): Unit
+func taskNotifyAll<T>(task: Task<T>): Unit
 
 @Intrinsic
-func taskLockContinuationsOrAlreadyComplete<T, I>(task: Task<T, I>): Int64
+func taskLockContinuationsOrAlreadyComplete<T>(task: Task<T>): Int64
 
 @Intrinsic
-func taskUnlockContinuations<T, I>(task: Task<T, I>): Unit
+func taskUnlockContinuations<T>(task: Task<T>): Unit
 
 @Intrinsic
-func taskNotifyEndThread<T, I>(task: Task<T, I>): Unit
+func taskNotifyEndThread<T>(task: Task<T>): Unit
 
 @FastNative
 foreign func CJ_CORE_PrintOomHint(): Unit
@@ -131,22 +131,28 @@ internal class RunnableContinuation<I> <: ContinuousInlineExecution {
     }
 }
 
-public class Task<I, T> {
-    // `_thread` must be the first field,
-    // it will be accessed when spawning a runtime cj thread.
-    internal var state: TaskState<T> = Pending
-    internal var executeFn: (I) -> T
-    internal var nextContinuations = NextContinuations<T>()
-    public var padding = VArray<Int64, $15>(repeat: 0)
+public interface Getable<T> {
+    func get(): T
+    func tryGet(): ?T
+    func get(timeout: Duration): T
+}
 
-    public Task(fn: (I) -> T) {
-        this.executeFn = fn
+public interface Chainable<T> {
+    func then<U>(f: (T) -> U): Task<U>
+}
+
+abstract sealed class Task<T> <: Getable<T> {
+    internal var state: TaskState<T> = Pending
+    internal var nextContinuations = NextContinuations<T>()
+    public var nativeResources = VArray<Int64, $15>(repeat: 0)
+
+
+    protected func initNativeResources() {
         unsafe { taskInit(this) }
     }
-
     /**
      * Blocking the current thread,
-     * waiting for the result of the thread corresponding to this Task object.
+     * waiting for the result of the thread corresponding to this InternalTask object.
      * @throws Exception or Error if an exception occurs in the corresponding thread.
      */
     public func get(): T {
@@ -205,7 +211,13 @@ public class Task<I, T> {
     }
 }
 
-extend<I, T> Task<I, T> <: Takes<I> {
+internal abstract class InternalTask<I, T> <: Task<T> & Takes<I> {
+    internal var executeFn: (I) -> T
+
+    public InternalTask(fn: (I) -> T) {
+        this.executeFn = fn
+    }
+
     public func next(input: I): ?ContinuousInlineExecution {
         let outcome: TaskOutcome<T> = try {
             Success(executeFn(input))
@@ -253,19 +265,11 @@ extend<I, T> Task<I, T> <: Takes<I> {
             nextContinuations.elements[i].propagateFailure(fail)
         }
     }
-
-    // internal func requestCancellation(): Unit {
-        // this._thread.setCancellationRequest()
-    // }
-
-    // internal func getThread(): Thread {
-        // _thread
-    // }
 }
 
-extend<I, T> Task<I, T> {
-    public func then<U>(fn: (T) -> U): Task<T, U> {
-        let next = Task<T, U>(fn)
+extend<T> Task<T> <: Chainable<T> {
+    public func then<U>(fn: (T) -> U): Task<U> {
+        let next = ConcreteTask<T, U>(fn)
         let taken: Takes<T> = next
         while (true) {
             let ret = unsafe { taskLockContinuationsOrAlreadyComplete(this) }
@@ -291,8 +295,15 @@ extend<I, T> Task<I, T> {
     }
 }
 
-public func task<T>(f: () -> T): Task<Unit, T> {
-    let output = Task<Unit, T> { _ => f() }
+internal class ConcreteTask<I, T> <: InternalTask<I, T> {
+    ConcreteTask(f: (I) -> T) {
+        super(f)
+        initNativeResources()
+    }
+}
+
+public func task<T>(f: () -> T): Task<T> {
+    let output = ConcreteTask<Unit, T> { _ => f() }
     spawn {
         RunnableContinuation<Unit>(output, ()).executeContinuously()
     }
