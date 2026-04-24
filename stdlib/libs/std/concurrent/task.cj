@@ -68,34 +68,37 @@ internal enum TaskOutcome<T> {
     }
 }
 
-protected enum Failure {
+internal enum Failure {
     | Errored(Error)
     | Excepted(Exception)
 }
 
-protected abstract class Takes<I> {
+internal interface FailurePropagator {
+    // Set the state of all dependents (recursively) to the failure
+    // and notify completion.
+    func propagateFailure(fail: Failure): Unit
+}
+
+internal interface Takes<I> <: FailurePropagator {
     // Run Continuation body inline, and return a
     // handle which allows running the first dependent
     // continuation which its output
-    protected func next(arg: I): ?ContinuousInlineExecution
-    // Set the state of all dependents (recursively) to the failure
-    // and notify completion.
-    protected func propagateFailure(fail: Failure): Unit
+    func next(arg: I): ?ContinuousInlineExecution
 
-    protected func execute(arg: I): Unit {
+    func execute(arg: I): Unit {
         RunnableContinuation(this, arg).executeContinuously()
     }
 }
 
-class DummyContinuation<T> <: Takes<T> {
-    protected func next(arg: T): ?ContinuousInlineExecution { None }
-    protected func propagateFailure(fail: Failure): Unit {}
+internal class DummyContinuation<T> <: Takes<T> {
+    public func next(arg: T): ?ContinuousInlineExecution { None }
+    public func propagateFailure(fail: Failure): Unit {}
 }
 
 // Abstract class with no generic parameters necessary to perform
 // the runtime polymorphism in `launch` to loop through successive
 // continuations regardless of their input/output types.
-protected abstract class ContinuousInlineExecution {
+internal abstract class ContinuousInlineExecution {
     // Run the body closure in a new thread,
     // which successively runs the first dependent
     // continuation (in the same thread), and `launch`es
@@ -103,7 +106,7 @@ protected abstract class ContinuousInlineExecution {
     // The `launch`ed thread terminates when it completes
     // executing the closure of a continuation which has no
     // dependents.
-    protected func executeContinuously(): Unit {
+    public func executeContinuously(): Unit {
         // We want this to be written as a loop instead of
         // the more obvious recursive implementation to scale better
         var taskIter: ContinuousInlineExecution = this
@@ -112,7 +115,7 @@ protected abstract class ContinuousInlineExecution {
         }
     }
 
-    protected func next(): ?ContinuousInlineExecution
+    public func next(): ?ContinuousInlineExecution
 }
 
 // Using a continuation on its own requires the knowledge of the type of
@@ -120,19 +123,19 @@ protected abstract class ContinuousInlineExecution {
 // we can execute it, and then at the end pair the output with its first
 // dependent continuation to produce another element of this abstract class
 // above.
-protected class RunnableContinuation<I> <: ContinuousInlineExecution {
+internal class RunnableContinuation<I> <: ContinuousInlineExecution {
     RunnableContinuation(let cont: Takes<I>, let arg: I) {}
 
-    protected func next(): ?ContinuousInlineExecution {
+    public func next(): ?ContinuousInlineExecution {
         cont.next(arg)
     }
 }
 
-public class Task<I, T> <: Takes<I> {
+public class Task<I, T> {
     // `_thread` must be the first field,
     // it will be accessed when spawning a runtime cj thread.
     internal var state: TaskState<T> = Pending
-    private var executeFn: (I) -> T
+    internal var executeFn: (I) -> T
     internal var nextContinuations = NextContinuations<T>()
     public var padding = VArray<Int64, $15>(repeat: 0)
 
@@ -200,8 +203,10 @@ public class Task<I, T> <: Takes<I> {
             case Completed(outcome) => return outcome.unwrapOrThrow()
         }
     }
+}
 
-    protected func next(input: I): ?ContinuousInlineExecution {
+extend<I, T> Task<I, T> <: Takes<I> {
+    public func next(input: I): ?ContinuousInlineExecution {
         let outcome: TaskOutcome<T> = try {
             Success(executeFn(input))
         } catch (ex: Exception) {
@@ -236,7 +241,7 @@ public class Task<I, T> <: Takes<I> {
     }
 
     // assumes NOT already notified
-    protected func propagateFailure(fail: Failure): Unit {
+    public func propagateFailure(fail: Failure): Unit {
         state = Completed(Fail(fail))
         unsafe { taskNotifyAll(this) } // wake up the `.get()` threads
         propagateFailureInner(fail)
