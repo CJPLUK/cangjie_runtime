@@ -211,11 +211,12 @@ abstract sealed class Task<T> <: Getable<T> {
     }
 }
 
-internal abstract class InternalTask<I, T> <: Task<T> & Takes<I> {
+internal class InternalTask<I, T> <: Task<T> & Takes<I> {
     internal var executeFn: (I) -> T
 
     public InternalTask(fn: (I) -> T) {
         this.executeFn = fn
+        initNativeResources()
     }
 
     public func next(input: I): ?ContinuousInlineExecution {
@@ -269,7 +270,7 @@ internal abstract class InternalTask<I, T> <: Task<T> & Takes<I> {
 
 extend<T> Task<T> <: Chainable<T> {
     public func then<U>(fn: (T) -> U): Task<U> {
-        let next = ConcreteTask<T, U>(fn)
+        let next = InternalTask<T, U>(fn)
         let taken: Takes<T> = next
         while (true) {
             let ret = unsafe { taskLockContinuationsOrAlreadyComplete(this) }
@@ -295,15 +296,8 @@ extend<T> Task<T> <: Chainable<T> {
     }
 }
 
-internal class ConcreteTask<I, T> <: InternalTask<I, T> {
-    ConcreteTask(f: (I) -> T) {
-        super(f)
-        initNativeResources()
-    }
-}
-
 public func task<T>(f: () -> T): Task<T> {
-    let output = ConcreteTask<Unit, T> { _ => f() }
+    let output = InternalTask<Unit, T> { _ => f() }
     spawn {
         RunnableContinuation<Unit>(output, ()).executeContinuously()
     }
