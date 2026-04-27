@@ -151,6 +151,15 @@ abstract sealed class Task<T> <: Getable<T> {
     protected func initNativeResources() {
         unsafe { taskInit(this) }
     }
+
+    internal func completeAndWaitContinuationsUnlocked(outcome: TaskOutcome<T>): Unit {
+        state = Completed(outcome)
+        unsafe { taskNotifyAll(this) } // wake up the `.get()` threads
+        while (unsafe { taskContinuationsAreLocked(this) }) {
+            sleep(Duration.Zero)
+        }
+    }
+
     /**
      * Blocking the current thread,
      * waiting for the result of the thread corresponding to this InternalTask object.
@@ -232,11 +241,7 @@ internal class InternalTask<I, T> <: Task<T> & Takes<I> {
             er.printStackTrace()
             Fail(Errored(er))
         }
-        state = Completed(outcome)
-        unsafe { taskNotifyAll(this) } // wake up the `.get()` threads
-        while (unsafe { taskContinuationsAreLocked(this) }) {
-            sleep(Duration.Zero)
-        }
+        completeAndWaitContinuationsUnlocked(outcome)
         // Now this only thread which can (should) access nextContinuations
         match (outcome) {
             case Success(output) =>
@@ -279,11 +284,7 @@ internal class InternalCatch<E, T> <: Task<T> & Takes<T> & Takes<E> where E <: E
 
     public func next(input: T): ?ContinuousInlineExecution {
         let output = input
-        state = Completed(Success(output))
-        unsafe { taskNotifyAll(this) } // wake up the `.get()` threads
-        while (unsafe { taskContinuationsAreLocked(this) }) {
-            sleep(Duration.Zero)
-        }
+        completeAndWaitContinuationsUnlocked(Success(output))
         // Now this only thread which can (should) access nextContinuations
         if (nextContinuations.size > 0) {
             let out = RunnableContinuation<T>(nextContinuations.elements[0], output)
@@ -309,11 +310,7 @@ internal class InternalCatch<E, T> <: Task<T> & Takes<T> & Takes<E> where E <: E
             er.printStackTrace()
             Fail(Errored(er))
         }
-        state = Completed(outcome)
-        unsafe { taskNotifyAll(this) } // wake up the `.get()` threads
-        while (unsafe { taskContinuationsAreLocked(this) }) {
-            sleep(Duration.Zero)
-        }
+        completeAndWaitContinuationsUnlocked(outcome)
         // Now this only thread which can (should) access nextContinuations
         match (outcome) {
             case Success(output) =>
