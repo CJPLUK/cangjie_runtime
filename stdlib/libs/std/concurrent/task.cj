@@ -83,22 +83,18 @@ internal interface Takes<I> <: FailurePropagator {
     // Run Continuation body inline, and return a
     // handle which allows running the first dependent
     // continuation which its output
-    func next(arg: I): ?ContinuousInlineExecution
-
-    func execute(arg: I): Unit {
-        RunnableContinuation(this, arg).executeContinuously()
-    }
+    func next(arg: I): ?TaskChainLink
 }
 
 internal class DummyContinuation<T> <: Takes<T> {
-    public func next(arg: T): ?ContinuousInlineExecution { None }
+    public func next(arg: T): ?TaskChainLink { None }
     public func propagateFailure(fail: Failure): Unit {}
 }
 
 // Abstract class with no generic parameters necessary to perform
 // the runtime polymorphism in `launch` to loop through successive
 // continuations regardless of their input/output types.
-internal abstract class ContinuousInlineExecution {
+internal abstract class TaskChainLink {
     // Run the body closure in a new thread,
     // which successively runs the first dependent
     // continuation (in the same thread), and `launch`es
@@ -106,16 +102,20 @@ internal abstract class ContinuousInlineExecution {
     // The `launch`ed thread terminates when it completes
     // executing the closure of a continuation which has no
     // dependents.
-    public func executeContinuously(): Unit {
+    public func inlineChainExecution(): Unit {
         // We want this to be written as a loop instead of
         // the more obvious recursive implementation to scale better
-        var taskIter: ContinuousInlineExecution = this
+        var taskIter: TaskChainLink = this
         while (let Some(next) <- taskIter.next()) {
             taskIter = next
         }
     }
 
-    public func next(): ?ContinuousInlineExecution
+    public func spawnChainExecution(): Unit {
+        spawn { inlineChainExecution() }
+    }
+
+    public func next(): ?TaskChainLink
 }
 
 // Using a continuation on its own requires the knowledge of the type of
@@ -123,10 +123,10 @@ internal abstract class ContinuousInlineExecution {
 // we can execute it, and then at the end pair the output with its first
 // dependent continuation to produce another element of this abstract class
 // above.
-internal class RunnableContinuation<I> <: ContinuousInlineExecution {
+internal class RunnableContinuation<I> <: TaskChainLink {
     RunnableContinuation(let cont: Takes<I>, let arg: I) {}
 
-    public func next(): ?ContinuousInlineExecution {
+    public func next(): ?TaskChainLink {
         cont.next(arg)
     }
 }
@@ -160,21 +160,19 @@ abstract sealed class Task<T> <: Getable<T> {
         }
     }
 
-    internal func nextRunnableContinuation(output: T): ?ContinuousInlineExecution {
+    internal func nextRunnableContinuation(output: T): ?TaskChainLink {
         completeAndWaitContinuationsUnlocked(Success(output))
         if (nextContinuations.size > 0) {
             let out = RunnableContinuation<T>(nextContinuations.elements[0], output)
             for (i in 1..nextContinuations.size) {
-                spawn {
-                    RunnableContinuation<T>(nextContinuations.elements[i], output).executeContinuously()
-                }
+                RunnableContinuation<T>(nextContinuations.elements[i], output).spawnChainExecution()
             }
             return out
         }
         return None
     }
 
-    internal func nextRunnableContinuation(outcome: TaskOutcome<T>): ?ContinuousInlineExecution {
+    internal func nextRunnableContinuation(outcome: TaskOutcome<T>): ?TaskChainLink {
         completeAndWaitContinuationsUnlocked(outcome)
         // Now this only thread which can (should) access nextContinuations
         match (outcome) {
@@ -261,7 +259,7 @@ internal class InternalTask<I, T> <: Task<T> & Takes<I> {
         initNativeResources()
     }
 
-    public func next(input: I): ?ContinuousInlineExecution {
+    public func next(input: I): ?TaskChainLink {
         let outcome: TaskOutcome<T> = try {
             Success(executeFn(input))
         } catch (ex: Exception) {
@@ -293,11 +291,11 @@ internal class InternalCatch<E, T> <: Task<T> & Takes<T> & Takes<E> where E <: E
         initNativeResources()
     }
 
-    public func next(input: T): ?ContinuousInlineExecution {
+    public func next(input: T): ?TaskChainLink {
         nextRunnableContinuation(input)
     }
 
-    public func next(exc: E): ?ContinuousInlineExecution {
+    public func next(exc: E): ?TaskChainLink {
         let outcome: TaskOutcome<T> = try {
             Success(handlerFn(exc))
         } catch (ex: Exception) {
@@ -316,9 +314,7 @@ internal class InternalCatch<E, T> <: Task<T> & Takes<T> & Takes<E> where E <: E
     public func propagateFailure(fail: Failure): Unit {
         if ((let Excepted(exc) <- fail) && (let Some(e) <- (exc as E))) {
             // The failure was an exception that this handler catches
-            spawn {
-                RunnableContinuation<E>(this, e).executeContinuously()
-            }
+            RunnableContinuation<E>(this, e).spawnChainExecution()
         } else {
             state = Completed(Fail(fail))
             unsafe { taskNotifyAll(this) } // wake up the `.get()` threads
@@ -344,9 +340,7 @@ extend<T> Task<T> <: Chainable<T> {
                     case Completed(outcome) => outcome.unwrapOrThrow()
                     case Pending => throw IllegalStateException("Task is not complete")
                 }
-                spawn {
-                    RunnableContinuation(next, output).executeContinuously()
-                }
+                RunnableContinuation(next, output).spawnChainExecution()
                 break
             }
             // otherwise it's been locked by another cjthread
@@ -370,9 +364,7 @@ extend<T> Task<T> <: Chainable<T> {
                     case Completed(outcome) => outcome.unwrapOrThrow()
                     case Pending => throw IllegalStateException("Task is not complete")
                 }
-                spawn {
-                    RunnableContinuation(next, output).executeContinuously()
-                }
+                RunnableContinuation(next, output).spawnChainExecution()
                 break
             }
             // otherwise it's been locked by another cjthread
@@ -384,8 +376,6 @@ extend<T> Task<T> <: Chainable<T> {
 
 public func task<T>(f: () -> T): Task<T> {
     let output = InternalTask<Unit, T> { _ => f() }
-    spawn {
-        RunnableContinuation<Unit>(output, ()).executeContinuously()
-    }
+    RunnableContinuation<Unit>(output, ()).spawnChainExecution()
     output
 }
