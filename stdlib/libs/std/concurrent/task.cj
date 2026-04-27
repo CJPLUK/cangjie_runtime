@@ -152,11 +152,43 @@ abstract sealed class Task<T> <: Getable<T> {
         unsafe { taskInit(this) }
     }
 
-    internal func completeAndWaitContinuationsUnlocked(outcome: TaskOutcome<T>): Unit {
+    private func completeAndWaitContinuationsUnlocked(outcome: TaskOutcome<T>): Unit {
         state = Completed(outcome)
         unsafe { taskNotifyAll(this) } // wake up the `.get()` threads
         while (unsafe { taskContinuationsAreLocked(this) }) {
             sleep(Duration.Zero)
+        }
+    }
+
+    internal func nextRunnableContinuation(output: T): ?ContinuousInlineExecution {
+        completeAndWaitContinuationsUnlocked(Success(output))
+        if (nextContinuations.size > 0) {
+            let out = RunnableContinuation<T>(nextContinuations.elements[0], output)
+            for (i in 1..nextContinuations.size) {
+                spawn {
+                    RunnableContinuation<T>(nextContinuations.elements[i], output).executeContinuously()
+                }
+            }
+            return out
+        }
+        return None
+    }
+
+    internal func nextRunnableContinuation(outcome: TaskOutcome<T>): ?ContinuousInlineExecution {
+        completeAndWaitContinuationsUnlocked(outcome)
+        // Now this only thread which can (should) access nextContinuations
+        match (outcome) {
+            case Success(output) => nextRunnableContinuation(output)
+            case Fail(cause) =>
+                propagateFailureToContinuations(cause)
+                None // Allow recoveries to be considered here
+        }
+    }
+
+    // assumes already notified
+    internal func propagateFailureToContinuations(fail: Failure): Unit {
+        for (i in 0..nextContinuations.size) {
+            nextContinuations.elements[i].propagateFailure(fail)
         }
     }
 
@@ -241,37 +273,16 @@ internal class InternalTask<I, T> <: Task<T> & Takes<I> {
             er.printStackTrace()
             Fail(Errored(er))
         }
-        completeAndWaitContinuationsUnlocked(outcome)
-        // Now this only thread which can (should) access nextContinuations
-        match (outcome) {
-            case Success(output) =>
-                if (nextContinuations.size > 0) {
-                    let out = RunnableContinuation<T>(nextContinuations.elements[0], output)
-                    for (i in 1..nextContinuations.size) {
-                        spawn {
-                            RunnableContinuation<T>(nextContinuations.elements[i], output).executeContinuously()
-                        }
-                    }
-                    return out
-                }
-            case Fail(cause) => propagateFailureInner(cause)
-        }
-        return None
+        nextRunnableContinuation(outcome)
     }
 
     // assumes NOT already notified
     public func propagateFailure(fail: Failure): Unit {
         state = Completed(Fail(fail))
         unsafe { taskNotifyAll(this) } // wake up the `.get()` threads
-        propagateFailureInner(fail)
+        propagateFailureToContinuations(fail)
     }
 
-    // assumes already notified
-    private func propagateFailureInner(fail: Failure): Unit {
-        for (i in 0..nextContinuations.size) {
-            nextContinuations.elements[i].propagateFailure(fail)
-        }
-    }
 }
 
 internal class InternalCatch<E, T> <: Task<T> & Takes<T> & Takes<E> where E <: Exception{
@@ -283,19 +294,7 @@ internal class InternalCatch<E, T> <: Task<T> & Takes<T> & Takes<E> where E <: E
     }
 
     public func next(input: T): ?ContinuousInlineExecution {
-        let output = input
-        completeAndWaitContinuationsUnlocked(Success(output))
-        // Now this only thread which can (should) access nextContinuations
-        if (nextContinuations.size > 0) {
-            let out = RunnableContinuation<T>(nextContinuations.elements[0], output)
-            for (i in 1..nextContinuations.size) {
-                spawn {
-                    RunnableContinuation<T>(nextContinuations.elements[i], output).executeContinuously()
-                }
-            }
-            return out
-        }
-        return None
+        nextRunnableContinuation(input)
     }
 
     public func next(exc: E): ?ContinuousInlineExecution {
@@ -310,22 +309,7 @@ internal class InternalCatch<E, T> <: Task<T> & Takes<T> & Takes<E> where E <: E
             er.printStackTrace()
             Fail(Errored(er))
         }
-        completeAndWaitContinuationsUnlocked(outcome)
-        // Now this only thread which can (should) access nextContinuations
-        match (outcome) {
-            case Success(output) =>
-                if (nextContinuations.size > 0) {
-                    let out = RunnableContinuation<T>(nextContinuations.elements[0], output)
-                    for (i in 1..nextContinuations.size) {
-                        spawn {
-                            RunnableContinuation<T>(nextContinuations.elements[i], output).executeContinuously()
-                        }
-                    }
-                    return out
-                }
-            case Fail(cause) => propagateFailureInner(cause)
-        }
-        return None
+        nextRunnableContinuation(outcome)
     }
 
     // assumes NOT already notified
@@ -338,16 +322,10 @@ internal class InternalCatch<E, T> <: Task<T> & Takes<T> & Takes<E> where E <: E
         } else {
             state = Completed(Fail(fail))
             unsafe { taskNotifyAll(this) } // wake up the `.get()` threads
-            propagateFailureInner(fail)
+            propagateFailureToContinuations(fail)
         }
     }
 
-    // assumes already notified
-    private func propagateFailureInner(fail: Failure): Unit {
-        for (i in 0..nextContinuations.size) {
-            nextContinuations.elements[i].propagateFailure(fail)
-        }
-    }
 }
 
 extend<T> Task<T> <: Chainable<T> {
