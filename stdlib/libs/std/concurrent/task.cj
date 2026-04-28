@@ -36,12 +36,15 @@ func taskNotifyEndThread<T>(task: Task<T>): Unit
 foreign func CJ_CORE_PrintOomHint(): Unit
 
 internal class NextContinuations<T> {
-    public var elements: Array<Takes<T>> = Array<Takes<T>>(4, repeat: DummyContinuation())
+    public var elements = Array<Takes<T>>(4, repeat: DummyContinuation())
     public var size = 0
 
     public func add(elem: Takes<T>): Unit {
         if (size >= elements.size) {
-            elements = elements.concat(Array<Takes<T>>(elements.size, repeat: DummyContinuation<T>()))
+            elements = elements.concat(Array<Takes<T>>(
+                elements.size,
+                repeat: DummyContinuation<T>()
+            ))
         }
         elements[size] = elem
         size++
@@ -64,6 +67,20 @@ internal enum TaskOutcome<T> {
             case Success(output) => return output
             case Fail(Excepted(exc)) => throw exc
             case Fail(Errored(err)) => throw err
+        }
+    }
+
+    internal static func captureOutcome<I>(fn: (I) -> T, input: I): TaskOutcome<T> {
+        try {
+            Success(fn(input))
+        } catch (ex: Exception) {
+            Fail(Excepted(ex))
+        } catch (er: OutOfMemoryError) {
+            unsafe { CJ_CORE_PrintOomHint() }
+            Fail(Errored(er))
+        } catch (er: Error) {
+            er.printStackTrace()
+            Fail(Errored(er))
         }
     }
 }
@@ -152,20 +169,24 @@ abstract sealed class Task<T> <: Getable<T> {
         unsafe { taskInit(this) }
     }
 
-    private func completeAndWaitContinuationsUnlocked(outcome: TaskOutcome<T>): Unit {
-        state = Completed(outcome)
+    internal func complete(outcome: TaskOutcome<T>): Unit {
+        this.state = Completed(outcome)
         unsafe { taskNotifyAll(this) } // wake up the `.get()` threads
+    }
+
+    internal func completeAndWaitContinuationsUnlocked(outcome: TaskOutcome<T>): Unit {
+        this.complete(outcome)
         while (unsafe { taskContinuationsAreLocked(this) }) {
             sleep(Duration.Zero)
         }
     }
 
     internal func nextRunnableContinuation(output: T): ?TaskChainLink {
-        completeAndWaitContinuationsUnlocked(Success(output))
-        if (nextContinuations.size > 0) {
+        if (this.nextContinuations.size > 0) {
             let out = RunnableContinuation<T>(nextContinuations.elements[0], output)
             for (i in 1..nextContinuations.size) {
-                RunnableContinuation<T>(nextContinuations.elements[i], output).spawnChainExecution()
+                RunnableContinuation<T>(nextContinuations.elements[i], output)
+                    .spawnChainExecution()
             }
             return out
         }
@@ -173,12 +194,11 @@ abstract sealed class Task<T> <: Getable<T> {
     }
 
     internal func nextRunnableContinuation(outcome: TaskOutcome<T>): ?TaskChainLink {
-        completeAndWaitContinuationsUnlocked(outcome)
         // Now this only thread which can (should) access nextContinuations
         match (outcome) {
             case Success(output) => nextRunnableContinuation(output)
             case Fail(cause) =>
-                propagateFailureToContinuations(cause)
+                this.propagateFailureToContinuations(cause)
                 None // Allow recoveries to be considered here
         }
     }
@@ -186,7 +206,33 @@ abstract sealed class Task<T> <: Getable<T> {
     // assumes already notified
     internal func propagateFailureToContinuations(fail: Failure): Unit {
         for (i in 0..nextContinuations.size) {
-            nextContinuations.elements[i].propagateFailure(fail)
+            this.nextContinuations.elements[i].propagateFailure(fail)
+        }
+    }
+
+    internal func acceptAndPropagateFailure(fail: Failure): Unit {
+        this.complete(Fail(fail))
+        this.propagateFailureToContinuations(fail)
+    }
+
+    internal func addContinuation(next: Takes<T>): Unit {
+        while (true) {
+            let ret = unsafe { taskLockContinuationsOrAlreadyComplete(this) }
+            if (ret == 1) {
+                this.nextContinuations.add(next)
+                unsafe { taskUnlockContinuations(this) }
+                break
+            }
+            if (ret == 0) {
+                let output = match (this.state) {
+                    case Completed(outcome) => outcome.unwrapOrThrow()
+                    case Pending => throw IllegalStateException("Task is not complete")
+                }
+                RunnableContinuation(next, output).spawnChainExecution()
+                break
+            }
+            // otherwise it's been locked by another cjthread
+            sleep(Duration.Zero)
         }
     }
 
@@ -196,15 +242,11 @@ abstract sealed class Task<T> <: Getable<T> {
      * @throws Exception or Error if an exception occurs in the corresponding thread.
      */
     public func get(): T {
-        if ( unsafe { taskIsComplete(this) } ) {
-            match (state) {
-                case Pending => throw IllegalStateException("Task must be complete at this point")
-                case Completed(outcome) => outcome.unwrapOrThrow()
-            }
+        if ( unsafe { !taskIsComplete(this) } ) {
+            unsafe { taskWait(this, Int64.Max) }
         }
-        unsafe { taskWait(this, Int64.Max) }
-        match (state) {
-            case Pending => get()
+        match (this.state) {
+            case Pending => throw IllegalStateException("Task must be complete at this point")
             case Completed(outcome) => outcome.unwrapOrThrow()
         }
     }
@@ -214,13 +256,12 @@ abstract sealed class Task<T> <: Getable<T> {
      * Returns the computed result otherwise.
      * @throws Exception or Error if an exception occurs in the corresponding thread.
      */
-    public func tryGet(): Option<T> {
-        let isComplete = unsafe { taskIsComplete(this) }
-        if (!isComplete) {
+    public func tryGet(): ?T {
+        if (unsafe { !taskIsComplete(this) }) {
             return None
         }
         match (state) {
-            case Pending => None
+            case Pending => None // Potentially throw exception instead
             case Completed(outcome) => outcome.unwrapOrThrow()
         }
     }
@@ -235,141 +276,72 @@ abstract sealed class Task<T> <: Getable<T> {
      */
     public func get(timeout: Duration): T {
         if (timeout <= Duration.Zero) {
-            return get()
+            return this.get()
         }
         // Wait for `ns` nanoseconds
         unsafe { taskWait(this, timeout.toNanoseconds()) }
         // Check whether the task is complete
-        let isCompleteAfterWait = unsafe { taskIsComplete(this) }
-        if (!isCompleteAfterWait) {
+        if (unsafe { !taskIsComplete(this) }) {
             throw TimeoutException()
         }
         match (state) {
-            case Pending => return get()
+            case Pending => throw IllegalStateException("Task is not complete")
             case Completed(outcome) => return outcome.unwrapOrThrow()
         }
     }
 }
 
 internal class InternalTask<I, T> <: Task<T> & Takes<I> {
-    internal var executeFn: (I) -> T
-
-    InternalTask(fn: (I) -> T) {
-        this.executeFn = fn
+    InternalTask(internal var executeFn: (I) -> T) {
         initNativeResources()
     }
 
     public func next(input: I): ?TaskChainLink {
-        let outcome: TaskOutcome<T> = try {
-            Success(executeFn(input))
-        } catch (ex: Exception) {
-            Fail(Excepted(ex))
-        } catch (er: OutOfMemoryError) {
-            unsafe { CJ_CORE_PrintOomHint() }
-            Fail(Errored(er))
-        } catch (er: Error) {
-            er.printStackTrace()
-            Fail(Errored(er))
-        }
+        let outcome = TaskOutcome<T>.captureOutcome<I>(executeFn, input)
+        completeAndWaitContinuationsUnlocked(outcome)
         nextRunnableContinuation(outcome)
     }
 
-    // assumes NOT already notified
     public func propagateFailure(fail: Failure): Unit {
-        state = Completed(Fail(fail))
-        unsafe { taskNotifyAll(this) } // wake up the `.get()` threads
-        propagateFailureToContinuations(fail)
+        acceptAndPropagateFailure(fail)
     }
-
 }
 
 internal class InternalCatch<E, T> <: Task<T> & Takes<T> & Takes<E> where E <: Exception{
-    internal var handlerFn: (E) -> T
-
-    InternalCatch(fn: (E) -> T) {
-        this.handlerFn = fn
-        initNativeResources()
+    InternalCatch(internal var handlerFn: (E) -> T) {
+        this.initNativeResources()
     }
 
     public func next(input: T): ?TaskChainLink {
-        nextRunnableContinuation(input)
+        this.completeAndWaitContinuationsUnlocked(Success(input))
+        this.nextRunnableContinuation(input)
     }
 
     public func next(exc: E): ?TaskChainLink {
-        let outcome: TaskOutcome<T> = try {
-            Success(handlerFn(exc))
-        } catch (ex: Exception) {
-            Fail(Excepted(ex))
-        } catch (er: OutOfMemoryError) {
-            unsafe { CJ_CORE_PrintOomHint() }
-            Fail(Errored(er))
-        } catch (er: Error) {
-            er.printStackTrace()
-            Fail(Errored(er))
-        }
-        nextRunnableContinuation(outcome)
+        let outcome = TaskOutcome<T>.captureOutcome<E>(handlerFn, exc)
+        this.completeAndWaitContinuationsUnlocked(outcome)
+        this.nextRunnableContinuation(outcome)
     }
 
-    // assumes NOT already notified
     public func propagateFailure(fail: Failure): Unit {
-        if ((let Excepted(exc) <- fail) && (let Some(e) <- (exc as E))) {
-            // The failure was an exception that this handler catches
-            RunnableContinuation<E>(this, e).spawnChainExecution()
+        if (let Excepted(exc: E) <- fail) {
+            RunnableContinuation<E>(this, exc).spawnChainExecution()
         } else {
-            state = Completed(Fail(fail))
-            unsafe { taskNotifyAll(this) } // wake up the `.get()` threads
-            propagateFailureToContinuations(fail)
+            this.acceptAndPropagateFailure(fail)
         }
     }
-
 }
 
 extend<T> Task<T> <: Chainable<T> {
     public func then<U>(fn: (T) -> U): Task<U> {
         let next = InternalTask<T, U>(fn)
-        let taken: Takes<T> = next
-        while (true) {
-            let ret = unsafe { taskLockContinuationsOrAlreadyComplete(this) }
-            if (ret == 1) {
-                this.nextContinuations.add(taken)
-                unsafe { taskUnlockContinuations(this) }
-                break
-            }
-            if (ret == 0) {
-                let output = match (this.state) {
-                    case Completed(outcome) => outcome.unwrapOrThrow()
-                    case Pending => throw IllegalStateException("Task is not complete")
-                }
-                RunnableContinuation(next, output).spawnChainExecution()
-                break
-            }
-            // otherwise it's been locked by another cjthread
-            sleep(Duration.Zero)
-        }
+        this.addContinuation(next)
         return next
     }
 
     public func recover<E>(h: (E) -> T): Task<T> where E <: Exception {
         let next = InternalCatch<E, T>(h)
-        let taken: Takes<T> = next
-        while (true) {
-            let ret = unsafe { taskLockContinuationsOrAlreadyComplete(this) }
-            if (ret == 1) {
-                this.nextContinuations.add(taken)
-                unsafe { taskUnlockContinuations(this) }
-                break
-            }
-            if (ret == 0) {
-                let output = match (this.state) {
-                    case Completed(outcome) => outcome.unwrapOrThrow()
-                    case Pending => throw IllegalStateException("Task is not complete")
-                }
-                RunnableContinuation(next, output).spawnChainExecution()
-                break
-            }
-            // otherwise it's been locked by another cjthread
-            sleep(Duration.Zero)
-        }
+        this.addContinuation(next)
         return next
     }
 }
@@ -379,3 +351,4 @@ public func task<T>(f: () -> T): Task<T> {
     RunnableContinuation<Unit>(output, ()).spawnChainExecution()
     output
 }
+
