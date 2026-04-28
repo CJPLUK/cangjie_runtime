@@ -53,16 +53,14 @@ internal class NextContinuations<T> {
     }
 }
 
+// Completed is a terminal state,
+// should not be mutated after being set to this
 internal enum TaskState<T> {
-    | Pending
-    // Completed is a terminal state,
-    // should not be mutated after being set to this
-    | Completed(TaskOutcome<T>)
+    Pending | Completed(TaskOutcome<T>)
 }
 
 internal enum TaskOutcome<T> {
-    | Success(T)
-    | Fail(Failure)
+    Success(T) | Fail(Failure)
 
     internal func unwrapOrThrow(): T {
         match (this) {
@@ -88,8 +86,7 @@ internal enum TaskOutcome<T> {
 }
 
 internal enum Failure {
-    | Errored(Error)
-    | Excepted(Exception)
+    Errored(Error) | Excepted(Exception)
 }
 
 internal interface FailurePropagator {
