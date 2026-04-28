@@ -41,10 +41,12 @@ internal class NextContinuations<T> {
 
     public func add(elem: Takes<T>): Unit {
         if (size >= elements.size) {
-            elements = elements.concat(Array<Takes<T>>(
-                elements.size,
-                repeat: DummyContinuation<T>()
-            ))
+            elements = elements.concat(
+                Array<Takes<T>>(
+                    elements.size,
+                    repeat: DummyContinuation<T>()
+                )
+            )
         }
         elements[size] = elem
         size++
@@ -104,7 +106,9 @@ internal interface Takes<I> <: FailurePropagator {
 }
 
 internal class DummyContinuation<T> <: Takes<T> {
-    public func next(arg: T): ?TaskChainLink { None }
+    public func next(arg: T): ?TaskChainLink {
+        None
+    }
     public func propagateFailure(fail: Failure): Unit {}
 }
 
@@ -129,7 +133,7 @@ internal abstract class TaskChainLink {
     }
 
     public func spawnChainExecution(): Unit {
-        spawn { inlineChainExecution() }
+        spawn {inlineChainExecution()}
     }
 
     public func next(): ?TaskChainLink
@@ -159,11 +163,10 @@ public interface Chainable<T> {
     func recover<E>(h: (E) -> T): Task<T> where E <: Exception
 }
 
-abstract sealed class Task<T> <: Getable<T> {
+sealed abstract class Task<T> <: Getable<T> {
     internal var state: TaskState<T> = Pending
     internal var nextContinuations = NextContinuations<T>()
     public var nativeResources = VArray<Int64, $15>(repeat: 0)
-
 
     protected func initNativeResources() {
         unsafe { taskInit(this) }
@@ -242,7 +245,7 @@ abstract sealed class Task<T> <: Getable<T> {
      * @throws Exception or Error if an exception occurs in the corresponding thread.
      */
     public func get(): T {
-        if ( unsafe { !taskIsComplete(this) } ) {
+        if (unsafe { !taskIsComplete(this) }) {
             unsafe { taskWait(this, Int64.Max) }
         }
         match (this.state) {
@@ -307,7 +310,7 @@ internal class InternalTask<I, T> <: Task<T> & Takes<I> {
     }
 }
 
-internal class InternalCatch<E, T> <: Task<T> & Takes<T> & Takes<E> where E <: Exception{
+internal class InternalCatch<E, T> <: Task<T> & Takes<T> & Takes<E> where E <: Exception {
     InternalCatch(internal var handlerFn: (E) -> T) {
         this.initNativeResources()
     }
@@ -347,8 +350,7 @@ extend<T> Task<T> <: Chainable<T> {
 }
 
 public func task<T>(f: () -> T): Task<T> {
-    let output = InternalTask<Unit, T> { _ => f() }
+    let output = InternalTask<Unit, T> {_ => f()}
     RunnableContinuation<Unit>(output, ()).spawnChainExecution()
     output
 }
-
