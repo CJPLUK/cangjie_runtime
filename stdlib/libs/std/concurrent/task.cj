@@ -7,6 +7,7 @@
  */
 
 package std.concurrent
+import std.core.zeroValue
 
 @Intrinsic
 func taskInit<T>(task: Task<T>): Unit
@@ -36,7 +37,7 @@ func taskNotifyEndThread<T>(task: Task<T>): Unit
 foreign func CJ_CORE_PrintOomHint(): Unit
 
 internal class NextContinuations<T> {
-    public var elements = Array<Takes<T>>(4, repeat: DummyContinuation())
+    public var elements = Array<Takes<T>>(4, repeat: unsafe { zeroValue<Takes<T>>() })
     public var size = 0
 
     public func add(elem: Takes<T>): Unit {
@@ -44,7 +45,7 @@ internal class NextContinuations<T> {
             elements = elements.concat(
                 Array<Takes<T>>(
                     elements.size,
-                    repeat: DummyContinuation<T>()
+                    repeat: unsafe { zeroValue<Takes<T>>() }
                 )
             )
         }
@@ -100,13 +101,6 @@ internal interface Takes<I> <: FailurePropagator {
     // handle which allows running the first dependent
     // continuation which its output
     func next(arg: I): ?TaskChainLink
-}
-
-internal class DummyContinuation<T> <: Takes<T> {
-    public func next(arg: T): ?TaskChainLink {
-        None
-    }
-    public func propagateFailure(fail: Failure): Unit {}
 }
 
 // Abstract class with no generic parameters necessary to perform
