@@ -94,6 +94,7 @@ internal interface FailurePropagator {
     // Set the state of all dependents (recursively) to the failure
     // and notify completion.
     func propagateFailure(fail: Failure): Unit
+    func propagateFailureInline(fail: Failure): ?TaskChainLink
 }
 
 internal interface Takes<I> <: FailurePropagator {
@@ -190,10 +191,8 @@ sealed abstract class Task<T> <: Getable<T> {
     internal func nextRunnableContinuation(outcome: TaskOutcome<T>): ?TaskChainLink {
         // Now this only thread which can (should) access nextContinuations
         match (outcome) {
-            case Success(output) => nextRunnableContinuation(output)
-            case Fail(cause) =>
-                this.propagateFailureToContinuations(cause)
-                None // Allow recoveries to be considered here
+            case Success(output) => this.nextRunnableContinuation(output)
+            case Fail(cause) => this.propagateFailureToContinuationsInline(cause)
         }
     }
 
@@ -204,18 +203,24 @@ sealed abstract class Task<T> <: Getable<T> {
         }
     }
 
-    internal func acceptAndPropagateFailure(fail: Failure): Unit {
-        this.complete(Fail(fail))
-        this.propagateFailureToContinuations(fail)
+    internal func propagateFailureToContinuationsInline(fail: Failure): ?TaskChainLink {
+        for (i in 0..nextContinuations.size) {
+            let next = this.nextContinuations.elements[i].propagateFailureInline(fail) ?? continue
+            for (j in (i+1)..nextContinuations.size) {
+                this.nextContinuations.elements[j].propagateFailure(fail)
+            }
+            return next
+        }
+        return None
     }
 
     internal func addContinuation(next: Takes<T>): Unit {
-        while (true) {
+        do {
             let ret = unsafe { taskLockContinuationsOrAlreadyComplete(this) }
             if (ret == 1) {
                 this.nextContinuations.add(next)
                 unsafe { taskUnlockContinuations(this) }
-                break
+                return
             }
             if (ret == 0) {
                 let output = match (this.state) {
@@ -223,11 +228,11 @@ sealed abstract class Task<T> <: Getable<T> {
                     case Pending => throw IllegalStateException("Task is not complete")
                 }
                 RunnableContinuation(next, output).spawnChainExecution()
-                break
+                return
             }
             // otherwise it's been locked by another cjthread
             sleep(Duration.Zero)
-        }
+        } while (true)
     }
 
     /**
@@ -297,7 +302,13 @@ internal class InternalTask<I, T> <: Task<T> & Takes<I> {
     }
 
     public func propagateFailure(fail: Failure): Unit {
-        acceptAndPropagateFailure(fail)
+        this.complete(Fail(fail))
+        this.propagateFailureToContinuations(fail)
+    }
+
+    public func propagateFailureInline(fail: Failure): ?TaskChainLink {
+        this.complete(Fail(fail))
+        this.propagateFailureToContinuationsInline(fail)
     }
 }
 
@@ -321,7 +332,17 @@ internal class InternalCatch<E, T> <: Task<T> & Takes<T> & Takes<E> where E <: E
         if (let Excepted(exc: E) <- fail) {
             RunnableContinuation<E>(this, exc).spawnChainExecution()
         } else {
-            this.acceptAndPropagateFailure(fail)
+            this.complete(Fail(fail))
+            this.propagateFailureToContinuations(fail)
+        }
+    }
+
+    public func propagateFailureInline(fail: Failure): ?TaskChainLink {
+        if (let Excepted(exc: E) <- fail) {
+            RunnableContinuation<E>(this, exc)
+        } else {
+            this.complete(Fail(fail))
+            this.propagateFailureToContinuationsInline(fail)
         }
     }
 }
