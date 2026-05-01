@@ -90,6 +90,8 @@ internal enum Failure {
     Errored(Error) | Excepted(Exception)
 }
 
+public class TaskCancelledException <: Exception {}
+
 internal interface FailurePropagator {
     // Set the state of all dependents (recursively) to the failure
     // and notify completion.
@@ -298,6 +300,10 @@ internal class InternalTask<I, T> <: Task<T> & Takes<I> {
     public func next(input: I): ?TaskChainLink {
         let outcome = TaskOutcome<T>.captureOutcome<I>(executeFn, input)
         completeAndWaitContinuationsUnlocked(outcome)
+        if (Thread.currentThread.hasPendingCancellation) {
+            this.propagateFailureToContinuations(Excepted(TaskCancelledException()))
+            return None
+        }
         nextRunnableContinuation(outcome)
     }
 
@@ -325,6 +331,10 @@ internal class InternalCatch<E, T> <: Task<T> & Takes<T> & Takes<E> where E <: E
     public func next(exc: E): ?TaskChainLink {
         let outcome = TaskOutcome<T>.captureOutcome<E>(handlerFn, exc)
         this.completeAndWaitContinuationsUnlocked(outcome)
+        if (Thread.currentThread.hasPendingCancellation) {
+            this.propagateFailureToContinuations(Excepted(TaskCancelledException()))
+            return None
+        }
         this.nextRunnableContinuation(outcome)
     }
 
