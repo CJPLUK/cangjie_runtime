@@ -10,28 +10,28 @@ package std.concurrent
 import std.core.zeroValue
 
 @Intrinsic
-func taskInit<T>(task: Task<T>): Unit
+func taskInit<T, S>(task: Task<T, S>): Unit where S <: Spawner
 
 @Intrinsic
-func taskIsComplete<T>(task: Task<T>): Bool
+func taskIsComplete<T, S>(task: Task<T, S>): Bool where S <: Spawner
 
 @Intrinsic
-func taskContinuationsAreLocked<T>(task: Task<T>): Bool
+func taskContinuationsAreLocked<T, S>(task: Task<T, S>): Bool where S <: Spawner
 
 @Intrinsic
-func taskWait<T>(task: Task<T>, timeout: Int64): Unit
+func taskWait<T, S>(task: Task<T, S>, timeout: Int64): Unit where S <: Spawner
 
 @Intrinsic
-func taskNotifyAll<T>(task: Task<T>): Unit
+func taskNotifyAll<T, S>(task: Task<T, S>): Unit where S <: Spawner
 
 @Intrinsic
-func taskLockContinuationsOrAlreadyComplete<T>(task: Task<T>): Int64
+func taskLockContinuationsOrAlreadyComplete<T, S>(task: Task<T, S>): Int64 where S <: Spawner
 
 @Intrinsic
-func taskUnlockContinuations<T>(task: Task<T>): Unit
+func taskUnlockContinuations<T, S>(task: Task<T, S>): Unit where S <: Spawner
 
 @Intrinsic
-func taskNotifyEndThread<T>(task: Task<T>): Unit
+func taskNotifyEndThread<T, S>(task: Task<T, S>): Unit where S <: Spawner
 
 @FastNative
 foreign func CJ_CORE_PrintOomHint(): Unit
@@ -106,6 +106,16 @@ internal interface Takes<I> <: FailurePropagator {
     func next(arg: I): ?TaskChainLink
 }
 
+sealed interface Spawner {
+    func launch(fn: () -> Unit): Unit
+}
+
+public class DefaultSpawner <: Spawner {
+    public func launch(fn: () -> Unit): Unit {
+        spawn { fn() }
+    }
+}
+
 // Abstract class with no generic parameters necessary to perform
 // the runtime polymorphism in `launch` to loop through successive
 // continuations regardless of their input/output types.
@@ -124,10 +134,6 @@ internal abstract class TaskChainLink {
         while (let Some(next) <- taskIter.next()) {
             taskIter = next
         }
-    }
-
-    public func spawnChainExecution(): Unit {
-        spawn {inlineChainExecution()}
     }
 
     public func next(): ?TaskChainLink
@@ -152,15 +158,20 @@ public interface Getable<T> {
     func get(timeout: Duration): T
 }
 
-public interface Chainable<T> {
-    func then<U>(f: (T) -> U): Task<U>
-    func recover<E>(h: (E) -> T): Task<T> where E <: Exception
+public interface Chainable<T, S> where S <: Spawner {
+    func then<U>(f: (T) -> U): Task<U, S>
+    func recover<E>(h: (E) -> T): Task<T, S> where E <: Exception
 }
 
-sealed abstract class Task<T> <: Getable<T> {
+sealed abstract class Task<T, S> <: Getable<T> where S <: Spawner {
     internal var state: TaskState<T> = Pending
     internal var nextContinuations = NextContinuations<T>()
     public var nativeResources = VArray<Int64, $15>(repeat: 0)
+    let spawner: S
+
+    Task(s: S) {
+        spawner = s
+    }
 
     protected func initNativeResources() {
         unsafe { taskInit(this) }
@@ -182,8 +193,9 @@ sealed abstract class Task<T> <: Getable<T> {
         if (this.nextContinuations.size > 0) {
             let out = RunnableContinuation<T>(nextContinuations.elements[0], output)
             for (i in 1..nextContinuations.size) {
-                RunnableContinuation<T>(nextContinuations.elements[i], output)
-                    .spawnChainExecution()
+                this.spawner.launch(
+                    RunnableContinuation<T>(nextContinuations.elements[i], output).inlineChainExecution
+                )
             }
             return out
         }
@@ -229,7 +241,7 @@ sealed abstract class Task<T> <: Getable<T> {
                     case Completed(outcome) => outcome.unwrapOrThrow()
                     case Pending => throw IllegalStateException("Task is not complete")
                 }
-                RunnableContinuation(next, output).spawnChainExecution()
+                this.spawner.launch(RunnableContinuation(next, output).inlineChainExecution)
                 return
             }
             // otherwise it's been locked by another cjthread
@@ -292,8 +304,9 @@ sealed abstract class Task<T> <: Getable<T> {
     }
 }
 
-internal class InternalTask<I, T> <: Task<T> & Takes<I> {
-    InternalTask(internal var executeFn: (I) -> T) {
+internal class InternalTask<I, T, S> <: Task<T, S> & Takes<I> where S <: Spawner {
+    InternalTask(spawner: S, internal var executeFn: (I) -> T) {
+        super(spawner)
         initNativeResources()
     }
 
@@ -318,8 +331,9 @@ internal class InternalTask<I, T> <: Task<T> & Takes<I> {
     }
 }
 
-internal class InternalCatch<E, T> <: Task<T> & Takes<T> & Takes<E> where E <: Exception {
-    InternalCatch(internal var handlerFn: (E) -> T) {
+internal class InternalCatch<E, T, S> <: Task<T, S> & Takes<T> & Takes<E> where E <: Exception, S <: Spawner {
+    InternalCatch(spawner: S, internal var handlerFn: (E) -> T) {
+        super(spawner)
         this.initNativeResources()
     }
 
@@ -340,7 +354,7 @@ internal class InternalCatch<E, T> <: Task<T> & Takes<T> & Takes<E> where E <: E
 
     public func propagateFailure(fail: Failure): Unit {
         if (let Excepted(exc: E) <- fail) {
-            RunnableContinuation<E>(this, exc).spawnChainExecution()
+            this.spawner.launch(RunnableContinuation<E>(this, exc).inlineChainExecution)
         } else {
             this.complete(Fail(fail))
             this.propagateFailureToContinuations(fail)
@@ -357,22 +371,29 @@ internal class InternalCatch<E, T> <: Task<T> & Takes<T> & Takes<E> where E <: E
     }
 }
 
-extend<T> Task<T> <: Chainable<T> {
-    public func then<U>(fn: (T) -> U): Task<U> {
-        let next = InternalTask<T, U>(fn)
+extend<T, S> Task<T, S> <: Chainable<T, S> where S <: Spawner {
+    public func then<U>(fn: (T) -> U): Task<U, S> {
+        let next = InternalTask<T, U, S>(this.spawner, fn)
         this.addContinuation(next)
         return next
     }
 
-    public func recover<E>(h: (E) -> T): Task<T> where E <: Exception {
-        let next = InternalCatch<E, T>(h)
+    public func recover<E>(h: (E) -> T): Task<T, S> where E <: Exception {
+        let next = InternalCatch<E, T, S>(this.spawner, h)
         this.addContinuation(next)
         return next
     }
 }
 
-public func task<T>(f: () -> T): Task<T> {
-    let output = InternalTask<Unit, T> {_ => f()}
-    RunnableContinuation<Unit>(output, ()).spawnChainExecution()
+public func task<T>(f: () -> T): Task<T, DefaultSpawner> {
+    let spawner = DefaultSpawner()
+    let output = InternalTask<Unit, T, DefaultSpawner>(spawner) {_ => f()}
+    spawner.launch(RunnableContinuation<Unit>(output, ()).inlineChainExecution)
+    output
+}
+
+public func task<T, S>(spawner: S, f: () -> T): Task<T, S> where S <: Spawner {
+    let output = InternalTask<Unit, T, S>(spawner) {_ => f()}
+    spawner.launch(RunnableContinuation<Unit>(output, ()).inlineChainExecution)
     output
 }
