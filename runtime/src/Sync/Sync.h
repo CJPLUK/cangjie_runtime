@@ -43,9 +43,9 @@ struct CJTask {
     void* klass;
 #ifdef __arm__
     uint32_t padding;
-    uint32_t data[2];
+    uint32_t data[3];
 #else
-    long long int data[2]; // should probs get away with 2
+    long long int data[3]; // should probs get away with 2
 #endif
     std::atomic<uint_fast8_t> state;
     std::atomic<int_fast8_t> isWaitQueueInit;

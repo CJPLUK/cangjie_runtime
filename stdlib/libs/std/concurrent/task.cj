@@ -160,12 +160,14 @@ public interface Getable<T> {
 
 public interface Chainable<T, S> where S <: Spawner {
     func then<U>(f: (T) -> U): Task<U, S>
+    func flatThen<U>(f: (T) -> Task<U, S>): Task<U, S>
     func recover<E>(h: (E) -> T): Task<T, S> where E <: Exception
 }
 
 sealed abstract class Task<T, S> <: Getable<T> where S <: Spawner {
     internal var state: TaskState<T> = Pending
     internal var nextContinuations = NextContinuations<T>()
+    internal var nextFastContinuations = NextContinuations<T>()
     public var nativeResources = VArray<Int64, $15>(repeat: 0)
     let spawner: S
 
@@ -197,6 +199,18 @@ sealed abstract class Task<T, S> <: Getable<T> where S <: Spawner {
                     RunnableContinuation<T>(nextContinuations.elements[i], output).inlineChainExecution
                 )
             }
+            for (i in 0..nextFastContinuations.size) {
+                let cont = RunnableContinuation<T>(nextFastContinuations.elements[i], output).next() ?? continue;
+                this.spawner.launch(cont.inlineChainExecution)
+            }
+            return out
+        }
+        for (i in 0..nextFastContinuations.size) {
+            let out = RunnableContinuation<T>(nextFastContinuations.elements[i], output).next() ?? continue
+            for (j in (i+1)..nextFastContinuations.size) {
+                let cont = RunnableContinuation<T>(nextFastContinuations.elements[j], output).next() ?? continue;
+                this.spawner.launch(cont.inlineChainExecution)
+            }
             return out
         }
         return None
@@ -215,6 +229,9 @@ sealed abstract class Task<T, S> <: Getable<T> where S <: Spawner {
         for (i in 0..nextContinuations.size) {
             this.nextContinuations.elements[i].propagateFailure(fail)
         }
+        for (i in 0..nextFastContinuations.size) {
+            this.nextFastContinuations.elements[i].propagateFailure(fail)
+        }
     }
 
     internal func propagateFailureToContinuationsInline(fail: Failure): ?TaskChainLink {
@@ -222,6 +239,16 @@ sealed abstract class Task<T, S> <: Getable<T> where S <: Spawner {
             let next = this.nextContinuations.elements[i].propagateFailureInline(fail) ?? continue
             for (j in (i+1)..nextContinuations.size) {
                 this.nextContinuations.elements[j].propagateFailure(fail)
+            }
+            for (j in 0..nextFastContinuations.size) {
+                this.nextFastContinuations.elements[j].propagateFailure(fail)
+            }
+            return next
+        }
+        for (i in 0..nextFastContinuations.size) {
+            let next = this.nextFastContinuations.elements[i].propagateFailureInline(fail) ?? continue
+            for (j in (i+1)..nextFastContinuations.size) {
+                this.nextFastContinuations.elements[j].propagateFailure(fail)
             }
             return next
         }
@@ -242,6 +269,28 @@ sealed abstract class Task<T, S> <: Getable<T> where S <: Spawner {
                     case Pending => throw IllegalStateException("Task is not complete")
                 }
                 this.spawner.launch(RunnableContinuation(next, output).inlineChainExecution)
+                return
+            }
+            // otherwise it's been locked by another cjthread
+            sleep(Duration.Zero)
+        } while (true)
+    }
+
+    internal func addFastContinuation(next: Takes<T>): Unit {
+        do {
+            let ret = unsafe { taskLockContinuationsOrAlreadyComplete(this) }
+            if (ret == 1) {
+                this.nextFastContinuations.add(next)
+                unsafe { taskUnlockContinuations(this) }
+                return
+            }
+            if (ret == 0) {
+                let output = match (this.state) {
+                    case Completed(outcome) => outcome.unwrapOrThrow()
+                    case Pending => throw IllegalStateException("Task is not complete")
+                }
+                let chainLink = RunnableContinuation(next, output).next() ?? return;
+                this.spawner.launch(chainLink.inlineChainExecution)
                 return
             }
             // otherwise it's been locked by another cjthread
@@ -371,6 +420,34 @@ internal class InternalCatch<E, T, S> <: Task<T, S> & Takes<T> & Takes<E> where 
     }
 }
 
+internal class FlattenedTask<T, S> <: Task<T, S> & Takes<T> where S <: Spawner {
+    FlattenedTask(spawner: S) {
+        super(spawner)
+        initNativeResources()
+    }
+
+    public func next(input: T): ?TaskChainLink {
+        let outcome = TaskOutcome<T>.Success(input)
+        completeAndWaitContinuationsUnlocked(outcome)
+        if (Thread.currentThread.hasPendingCancellation) {
+            this.propagateFailureToContinuations(Excepted(TaskCancelledException()))
+            return None
+        }
+        nextRunnableContinuation(outcome)
+    }
+
+    public func propagateFailure(fail: Failure): Unit {
+        this.complete(Fail(fail))
+        this.propagateFailureToContinuations(fail)
+    }
+
+    public func propagateFailureInline(fail: Failure): ?TaskChainLink {
+        this.complete(Fail(fail))
+        this.propagateFailureToContinuationsInline(fail)
+    }
+}
+
+
 extend<T, S> Task<T, S> <: Chainable<T, S> where S <: Spawner {
     public func then<U>(fn: (T) -> U): Task<U, S> {
         let next = InternalTask<T, U, S>(this.spawner, fn)
@@ -381,6 +458,16 @@ extend<T, S> Task<T, S> <: Chainable<T, S> where S <: Spawner {
     public func recover<E>(h: (E) -> T): Task<T, S> where E <: Exception {
         let next = InternalCatch<E, T, S>(this.spawner, h)
         this.addContinuation(next)
+        return next
+    }
+
+    public func flatThen<U>(fn: (T) -> Task<U, S>): Task<U, S> { // maybe S here should be a separate independent param
+        let next = FlattenedTask<U, S>(this.spawner)
+        // This particular continuation cannot be accessed by the user so could have a stripped
+        // version? Maybe a new implementer of Takes<T> which is not Task?
+        this.then<Unit> { t =>
+            fn(t).addFastContinuation(next)
+        }
         return next
     }
 }
