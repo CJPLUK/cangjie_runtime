@@ -66,7 +66,7 @@ make_cangjie_lib(
 make_cangjie_lib(
     std-concurrent IS_SHARED
     DEPENDS cangjie${BACKEND_TYPE}Concurrent
-    CANGJIE_STD_LIB_DEPENDS std-core std-time
+    CANGJIE_STD_LIB_DEPENDS std-core std-sync std-time
     OBJECTS ${output_cj_object_dir}/std/concurrent.o)
 
     add_library(cangjie-std-concurrent STATIC ${output_cj_object_dir}/std/concurrent.o)
