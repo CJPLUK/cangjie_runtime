@@ -5,6 +5,12 @@
 # See https://cangjie-lang.cn/pages/LICENSE for license information.
 
 set(CONCURRENT_SRCS
+    applicative.cj
     task.cj
+    CACHE INTERNAL ""
+)
+
+set(CONCURRENT_TASKSMACRO_SRCS
+    tasksmacro.cj
     CACHE INTERNAL ""
 )

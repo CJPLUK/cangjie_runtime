@@ -873,6 +873,19 @@ add_cangjie_library(
     DEPENDS ${SYNC_DEPENDENCIES})
 
 add_cangjie_library(
+    cangjie${BACKEND_TYPE}ConcurrentTasksmacro
+    COMPILE_MACRO
+    NO_SUB_PKG
+    IS_STDLIB
+    IS_PACKAGE
+    IS_CJNATIVE_BACKEND
+    PACKAGE_NAME "concurrent.tasksmacro"
+    MODULE_NAME "std"
+    SOURCES ${CONCURRENT_TASKSMACRO_SRCS}
+    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/std/concurrent/tasksmacro
+    DEPENDS ${CONCURRENT_TASKSMACRO_DEPENDENCIES})
+
+add_cangjie_library(
     cangjie${BACKEND_TYPE}Concurrent
     NO_SUB_PKG
     IS_STDLIB
@@ -880,9 +893,13 @@ add_cangjie_library(
     IS_CJNATIVE_BACKEND
     PACKAGE_NAME "concurrent"
     MODULE_NAME "std"
+    BACKEND_OPTS
+        --import-path ${CMAKE_CURRENT_BINARY_DIR}/cangjie${BACKEND_TYPE}ConcurrentTasksmacro-macro-build
+        -L ${CMAKE_CURRENT_BINARY_DIR}/cangjie${BACKEND_TYPE}ConcurrentTasksmacro-macro-build
+        -lmacro_std.concurrent.tasksmacro
     SOURCES ${CONCURRENT_SRCS}
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/std/concurrent
-    DEPENDS ${CONCURRENT_DEPENDENCIES})
+    DEPENDS ${CONCURRENT_DEPENDENCIES} cangjie${BACKEND_TYPE}ConcurrentTasksmacro)
 
 add_cangjie_library(
     cangjie${BACKEND_TYPE}Overflow IS_STDLIB IS_CJNATIVE_BACKEND

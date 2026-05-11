@@ -77,6 +77,7 @@ function(add_cangjie_library target_name)
         IS_CJNATIVE_BACKEND
         IS_JS_BACKEND
         DISABLE_REFLECTION
+        COMPILE_MACRO
         NO_SUB_PKG
         NO_SANCOV)
     set(one_value_args
@@ -97,7 +98,14 @@ function(add_cangjie_library target_name)
         ${ARGN})
 
     # pre-process source files
-    file(GLOB source_files CONFIGURE_DEPENDS ${CANGJIELIB_SOURCE_DIR}/*.cj)
+    if(CANGJIELIB_SOURCES)
+        set(source_files)
+        foreach(source_file ${CANGJIELIB_SOURCES})
+            list(APPEND source_files ${CANGJIELIB_SOURCE_DIR}/${source_file})
+        endforeach()
+    else()
+        file(GLOB source_files CONFIGURE_DEPENDS ${CANGJIELIB_SOURCE_DIR}/*.cj)
+    endif()
 
     set(BACKEND)
     if(CANGJIELIB_IS_CJNATIVE_BACKEND)
@@ -147,10 +155,15 @@ function(add_cangjie_library target_name)
     endif()
 
     set(MKDIR_TEMP_FILES_CMD)
+    set(PREPARE_PACKAGE_SOURCES_CMD)
     # append backend-options
-    list(LENGTH CANGJIELIB_OPTS options_length)
+    list(LENGTH CANGJIELIB_BACKEND_OPTS options_length)
     if(NOT (options_length EQUAL 0))
-        list(APPEND cangjie_compile_flags ${CANGJIELIB_OPTS})
+        list(APPEND cangjie_compile_flags ${CANGJIELIB_BACKEND_OPTS})
+    endif()
+
+    if(CANGJIELIB_COMPILE_MACRO)
+        list(APPEND cangjie_compile_flags "--compile-macro")
     endif()
     # append config options
     if(NOT ("${CANGJIELIB_CONFIG_OPTS}" STREQUAL ""))
@@ -158,13 +171,15 @@ function(add_cangjie_library target_name)
     endif()
 
     if(NOT ("${CANGJIELIB_MODULE_NAME}" STREQUAL ""))
-        set(output_full_name "${CMAKE_BINARY_DIR}/${output_dir}/${CANGJIELIB_MODULE_NAME}.${CANGJIELIB_PACKAGE_NAME}")
+        set(file_name "${CANGJIELIB_MODULE_NAME}.${CANGJIELIB_PACKAGE_NAME}")
     else()
-        set(output_full_name "${CMAKE_BINARY_DIR}/${output_dir}/${CANGJIELIB_PACKAGE_NAME}")
+        set(file_name "${CANGJIELIB_PACKAGE_NAME}")
     endif()
+
+    set(output_full_name "${CMAKE_BINARY_DIR}/${output_dir}/${file_name}")
     
     set(output_full_name_prefix "${CMAKE_BINARY_DIR}/${output_dir}/${CANGJIELIB_PACKAGE_NAME}")
-    if(CANGJIE_CODEGEN_CJNATIVE_BACKEND)
+    if(CANGJIE_CODEGEN_CJNATIVE_BACKEND AND NOT CANGJIELIB_COMPILE_MACRO)
         set(output_full_name "${output_full_name}.a") # set output path and output name
         if(NOT ("${CANGJIELIB_MODULE_NAME}" STREQUAL ""))
             set(output_lto_bc_full_name "${CMAKE_BINARY_DIR}/${output_bc_dir}/lib${CANGJIELIB_MODULE_NAME}.${CANGJIELIB_PACKAGE_NAME}")
@@ -179,7 +194,7 @@ function(add_cangjie_library target_name)
         list(APPEND cangjie_compile_flags "${build_args}")
     endforeach()
 
-    if(CANGJIE_CODEGEN_CJNATIVE_BACKEND)
+    if(CANGJIE_CODEGEN_CJNATIVE_BACKEND AND NOT CANGJIELIB_COMPILE_MACRO)
         list(APPEND cangjie_compile_flags "--output-type=staticlib")
     endif()
     if(TRIPLE STREQUAL "arm-linux-ohos")
@@ -215,6 +230,18 @@ function(add_cangjie_library target_name)
         set(CJNATIVE_PATH $ENV{CANGJIE_HOME}/third_party/llvm/bin)
     endif()
     set(COMPILE_CMD)
+    set(package_source_dir ${CANGJIELIB_SOURCE_DIR})
+    if(CANGJIELIB_IS_PACKAGE AND CANGJIELIB_SOURCES)
+        set(package_source_dir "${CMAKE_CURRENT_BINARY_DIR}/${target_name}-pkgsrc")
+        set(PREPARE_PACKAGE_SOURCES_CMD
+            COMMAND ${CMAKE_COMMAND} -E remove_directory ${package_source_dir}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${package_source_dir})
+        foreach(source_file ${source_files})
+            list(APPEND PREPARE_PACKAGE_SOURCES_CMD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different ${source_file} ${package_source_dir}/)
+        endforeach()
+    endif()
+
     if(CANGJIELIB_IS_PACKAGE)
         set(COMPILE_CMD
             ${cangjie_compiler_tool}
@@ -222,7 +249,7 @@ function(add_cangjie_library target_name)
             ${no_sub_pkg}
             ${cangjie_compile_flags}
             -p
-            ${CANGJIELIB_SOURCE_DIR}
+            ${package_source_dir}
             ${module_name_argument})
     else()
         set(COMPILE_CMD
@@ -239,12 +266,14 @@ function(add_cangjie_library target_name)
         endif()
     endif()
 
-    set(COMPILE_BC_CMD
-        ${COMPILE_CMD}
-        --lto=full
-        ${output_argument}
-        ${output_lto_bc_full_name})
-    set(COMPILE_CMD ${COMPILE_CMD} ${output_argument} ${output_full_name})
+    if(NOT CANGJIELIB_COMPILE_MACRO)
+        set(COMPILE_BC_CMD
+            ${COMPILE_CMD}
+            --lto=full
+            ${output_argument}
+            ${output_lto_bc_full_name})
+        set(COMPILE_CMD ${COMPILE_CMD} ${output_argument} ${output_full_name})
+    endif()
 
     if(NOT ("${CANGJIELIB_MODULE_NAME}" STREQUAL ""))
         set(temp_files_dir "${CMAKE_BINARY_DIR}/${output_dir}/${CANGJIELIB_MODULE_NAME}.${CANGJIELIB_PACKAGE_NAME}-temp-files")
@@ -260,7 +289,7 @@ function(add_cangjie_library target_name)
         list(APPEND COMPILE_CMD "--coverage")
     endif()
 
-    if(CANGJIE_CODEGEN_CJNATIVE_BACKEND)
+    if(CANGJIE_CODEGEN_CJNATIVE_BACKEND AND NOT CANGJIELIB_COMPILE_MACRO)
         if(TRIPLE STREQUAL "arm-linux-ohos")
             list(APPEND COMPILE_CMD "$<IF:$<CONFIG:MinSizeRel>,-Os,-O0>")
             # .bc files is for LTO mode and LTO mode does not support -Os and -Oz.
@@ -277,10 +306,48 @@ function(add_cangjie_library target_name)
 
     cj_resolve_depends(resolved_depends ${CANGJIELIB_DEPENDS})
 
+    if(CANGJIELIB_COMPILE_MACRO)
+        set(output_full_name "${CMAKE_BINARY_DIR}/${output_dir}/${file_name}.cjo")
+        set(output_macro_flag_file "${CMAKE_BINARY_DIR}/${output_dir}/${file_name}.cjo.flag")
+        set(output_macro_full_name "${CMAKE_BINARY_DIR}/lib/${output_triple_name}_${CJNATIVE_BACKEND}${SANITIZER_SUBPATH}/lib-macro_${file_name}.so")
+        set(macro_build_dir "${CMAKE_CURRENT_BINARY_DIR}/${target_name}-macro-build")
+
+        add_custom_command(
+            OUTPUT ${output_full_name} ${output_macro_full_name}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/${output_dir}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/lib/${output_triple_name}_${CJNATIVE_BACKEND}${SANITIZER_SUBPATH}
+            ${MKDIR_TEMP_FILES_CMD}
+            ${PREPARE_PACKAGE_SOURCES_CMD}
+            COMMAND ${CMAKE_COMMAND} -E remove_directory ${macro_build_dir}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${macro_build_dir}
+            COMMAND ${CMAKE_COMMAND} -E env "CANGJIE_PATH=${CMAKE_BINARY_DIR}/modules/${output_cj_lib_dir}" "LIBRARY_PATH=${CMAKE_BINARY_DIR}/lib" "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/lib:${CMAKE_BINARY_DIR}/lib/${output_triple_name}_${CJNATIVE_BACKEND}${SANITIZER_SUBPATH}:$ENV{LD_LIBRARY_PATH}"
+                    ${CMAKE_COMMAND} -E chdir ${macro_build_dir} ${COMPILE_CMD}
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${macro_build_dir}/${file_name}.cjo ${output_full_name}
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${macro_build_dir}/${file_name}.cjo.flag ${output_macro_flag_file}
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${macro_build_dir}/lib-macro_${file_name}.so ${output_macro_full_name}
+            DEPENDS ${resolved_depends} ${source_files} ${CANGJIELIB_SOURCE_DIR}
+            COMMENT "Generating ${target_name}")
+
+        add_custom_target(
+            ${target_name} ALL
+            DEPENDS ${output_full_name} ${output_macro_full_name} ${CANGJIELIB_DEPENDS})
+
+        set_target_properties(${target_name} PROPERTIES CJ_OUTPUT_FILE ${output_full_name})
+
+        if (CANGJIE_SANITIZER_SUPPORT_ENABLED)
+            return()
+        endif()
+
+        install(FILES ${output_full_name} ${output_macro_flag_file} DESTINATION ${output_dir})
+        install(FILES ${output_macro_full_name} DESTINATION lib/${output_triple_name}_${CJNATIVE_BACKEND}${SANITIZER_SUBPATH})
+        return()
+    endif()
+
     add_custom_command(
         OUTPUT ${output_full_name}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/${output_dir}
         ${MKDIR_TEMP_FILES_CMD}
+        ${PREPARE_PACKAGE_SOURCES_CMD}
         COMMAND ${CMAKE_COMMAND} -E env "CANGJIE_PATH=${CMAKE_BINARY_DIR}/modules/${output_cj_lib_dir}"  "LIBRARY_PATH=${CMAKE_BINARY_DIR}/lib"
                 ${COMPILE_CMD}
         DEPENDS ${resolved_depends} ${source_files} ${CANGJIELIB_SOURCE_DIR}

@@ -1,8 +1,17 @@
 package std.concurrent
 
 import std.sync.{AtomicUInt32, AtomicBool}
+import std.concurrent.tasksmacro.*
 
+// ====================
+// Two tasks
+// ====================
 
+// Keep the original handwritten two-task implementation as a commented example of
+// the declarations that `@GenerateTasks[2]` is expected to expand into.
+// The handwritten three-task version has been removed; `Tasks3` and above should
+// now only come from macro expansion.
+/*
 internal class Tasks2<T1, T2, S> <: Task<(T1, T2), S> & Takes<Unit> where S <: Spawner {
     let tasksLeft = AtomicUInt32(2)
     let failed = AtomicBool(false)
@@ -93,4 +102,53 @@ internal class Tasks2_2<T1, T2, S> <: Takes<T2> where S <: Spawner {
 public func tasks<T1, T2, S>(task1: Task<T1, S>, task2: Task<T2, S>): Task<(T1, T2), S> where S <: Spawner {
     Tasks2(task1, task2, task1.spawner) // I really want to refactor this spawner business
 }
+*/
 
+// ====================
+// Macro-generated tasks
+// ====================
+
+@GenerateTasks[2]
+struct _GenerateTasks2 {}
+
+@GenerateTasks[3]
+struct _GenerateTasks3 {}
+
+@GenerateTasks[4]
+struct _GenerateTasks4 {}
+
+@GenerateTasks[5]
+struct _GenerateTasks5 {}
+
+@GenerateTasks[6]
+struct _GenerateTasks6 {}
+
+@GenerateTasks[7]
+struct _GenerateTasks7 {}
+
+@GenerateTasks[8]
+struct _GenerateTasks8 {}
+
+@GenerateTasks[9]
+struct _GenerateTasks9 {}
+
+@GenerateTasks[10]
+struct _GenerateTasks10 {}
+
+@GenerateTasks[11]
+struct _GenerateTasks11 {}
+
+@GenerateTasks[12]
+struct _GenerateTasks12 {}
+
+@GenerateTasks[13]
+struct _GenerateTasks13 {}
+
+@GenerateTasks[14]
+struct _GenerateTasks14 {}
+
+@GenerateTasks[15]
+struct _GenerateTasks15 {}
+
+@GenerateTasks[16]
+struct _GenerateTasks16 {}
