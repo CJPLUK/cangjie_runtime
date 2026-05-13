@@ -177,7 +177,7 @@ function(add_cangjie_library target_name)
     endif()
 
     set(output_full_name "${CMAKE_BINARY_DIR}/${output_dir}/${file_name}")
-    
+
     set(output_full_name_prefix "${CMAKE_BINARY_DIR}/${output_dir}/${CANGJIELIB_PACKAGE_NAME}")
     if(CANGJIE_CODEGEN_CJNATIVE_BACKEND AND NOT CANGJIELIB_COMPILE_MACRO)
         set(output_full_name "${output_full_name}.a") # set output path and output name
@@ -185,8 +185,8 @@ function(add_cangjie_library target_name)
             set(output_lto_bc_full_name "${CMAKE_BINARY_DIR}/${output_bc_dir}/lib${CANGJIELIB_MODULE_NAME}.${CANGJIELIB_PACKAGE_NAME}")
         else()
             set(output_lto_bc_full_name "${CMAKE_BINARY_DIR}/${output_bc_dir}/lib${CANGJIELIB_PACKAGE_NAME}")
-        endif()        
-        
+        endif()
+
         set(output_lto_bc_full_name "${output_lto_bc_full_name}.bc") # set output path and output name
     endif()
 
@@ -413,13 +413,8 @@ function(add_cangjie_library target_name)
     if (CANGJIE_SANITIZER_SUPPORT_ENABLED)
         return()
     endif()
-    if(NOT ("${CANGJIELIB_MODULE_NAME}" STREQUAL ""))
-        set(file_name "${CANGJIELIB_MODULE_NAME}.${CANGJIELIB_PACKAGE_NAME}")
-    else()
-        set(file_name "${CANGJIELIB_PACKAGE_NAME}")
-    endif()
     set(install_files "${CMAKE_BINARY_DIR}/${output_dir}/${file_name}.cjo")
-    
+
     if(CANGJIE_CODEGEN_CJNATIVE_BACKEND)
     else()
         list(APPEND install_files "${CMAKE_BINARY_DIR}/${output_dir}/${file_name}.bchir")
