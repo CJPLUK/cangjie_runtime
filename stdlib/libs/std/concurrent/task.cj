@@ -8,6 +8,7 @@
 
 package std.concurrent
 import std.core.zeroValue
+import std.sync.*
 
 @Intrinsic
 func taskInit<T, S>(task: Task<T, S>): Unit where S <: Spawner
@@ -36,22 +37,8 @@ func taskNotifyEndThread<T, S>(task: Task<T, S>): Unit where S <: Spawner
 @FastNative
 foreign func CJ_CORE_PrintOomHint(): Unit
 
-internal class NextContinuations<T> {
-    public var elements = Array<Takes<T>>(4, repeat: unsafe { zeroValue<Takes<T>>() })
-    public var size = 0
-
-    public func add(elem: Takes<T>): Unit {
-        if (size >= elements.size) {
-            elements = elements.concat(
-                Array<Takes<T>>(
-                    elements.size,
-                    repeat: unsafe { zeroValue<Takes<T>>() }
-                )
-            )
-        }
-        elements[size] = elem
-        size++
-    }
+internal class ContinuationNode<T> {
+    ContinuationNode(let value: Takes<T>, var nextNode: ?ContinuationNode<T>) {}
 }
 
 // Completed is a terminal state,
@@ -166,8 +153,8 @@ public interface Chainable<T, S> where S <: Spawner {
 
 sealed abstract class Task<T, S> <: Getable<T> where S <: Spawner {
     internal var state: TaskState<T> = Pending
-    internal var nextContinuations = NextContinuations<T>()
-    internal var nextFastContinuations = NextContinuations<T>()
+    internal var nextContinuations = AtomicOptionReference<ContinuationNode<T>>(None)
+    internal var nextFastContinuations = AtomicOptionReference<ContinuationNode<T>>(None)
     public var nativeResources = VArray<Int64, $15>(repeat: 0)
     let spawner: S
 
@@ -191,31 +178,54 @@ sealed abstract class Task<T, S> <: Getable<T> where S <: Spawner {
         }
     }
 
+    // Assumes Task already marked as complete
     internal func nextRunnableContinuation(output: T): ?TaskChainLink {
-        if (this.nextContinuations.size > 0) {
-            let out = RunnableContinuation<T>(nextContinuations.elements[0], output)
-            for (i in 1..nextContinuations.size) {
-                this.spawner.launch(
-                    RunnableContinuation<T>(nextContinuations.elements[i], output).inlineChainExecution
-                )
+        let dummyNode = ContinuationNode<T>(unsafe {zeroValue<Takes<T>>()}, None) // maybe static member for this?
+        // The atomic optional references need to be changed to a different value,
+        // even in the case where the current value is None,
+        // in order to force CAS operation failures in a certain situation.
+        // That situation is where another thread prepares
+        // to add a node after observing the tasks is not complete, but the task then does
+        // complete, and we reach this point before the new node is about to be added.
+        // This is why we created a new dummy node here in order to guarantee that it is
+        // distinct from the current head nodes.
+        var drainingNextCont = this.nextContinuations.swap(dummyNode)
+        var drainingNextFastCont = this.nextFastContinuations.swap(dummyNode)
+
+        if (let Some(firstNext) <- drainingNextCont) {
+            drainingNextCont = firstNext.nextNode
+            let out = RunnableContinuation<T>(firstNext.value, output)
+            // spawn threads for rest of continuations
+            while (let Some(node) <- drainingNextCont) {
+                drainingNextCont = node.nextNode
+                let cont = RunnableContinuation<T>(node.value, output);
+                this.spawner.launch(cont.inlineChainExecution)
             }
-            for (i in 0..nextFastContinuations.size) {
-                let cont = RunnableContinuation<T>(nextFastContinuations.elements[i], output).next() ?? continue;
+            // execute fast continuations and spawn threads for next
+            while (let Some(node) <- drainingNextFastCont) {
+                drainingNextFastCont = node.nextNode
+                let cont = RunnableContinuation<T>(node.value, output).next() ?? continue;
                 this.spawner.launch(cont.inlineChainExecution)
             }
             return out
-        }
-        for (i in 0..nextFastContinuations.size) {
-            let out = RunnableContinuation<T>(nextFastContinuations.elements[i], output).next() ?? continue
-            for (j in (i+1)..nextFastContinuations.size) {
-                let cont = RunnableContinuation<T>(nextFastContinuations.elements[j], output).next() ?? continue;
-                this.spawner.launch(cont.inlineChainExecution)
+        } else {
+            // No non-fast continuations so may need to potentially return a continuation
+            // of a fast continuation
+            while (let Some(node) <- drainingNextFastCont) {
+                drainingNextCont = node.nextNode
+                let out = RunnableContinuation<T>(node.value, output).next() ?? continue;
+                while (let Some(node) <- drainingNextFastCont) {
+                    drainingNextFastCont = node.nextNode
+                    let cont = RunnableContinuation<T>(node.value, output).next() ?? continue;
+                    this.spawner.launch(cont.inlineChainExecution)
+                }
+                return out
             }
-            return out
+            return None
         }
-        return None
     }
 
+    // Assumes Task already marked as complete
     internal func nextRunnableContinuation(outcome: TaskOutcome<T>): ?TaskChainLink {
         // Now this only thread which can (should) access nextContinuations
         match (outcome) {
@@ -224,46 +234,73 @@ sealed abstract class Task<T, S> <: Getable<T> where S <: Spawner {
         }
     }
 
-    // assumes already notified
+    // Assumes `this` task already complete
     internal func propagateFailureToContinuations(fail: Failure): Unit {
-        for (i in 0..nextContinuations.size) {
-            this.nextContinuations.elements[i].propagateFailure(fail)
+        let dummyNode = ContinuationNode<T>(unsafe {zeroValue<Takes<T>>()}, None) // maybe static member for this?
+        var drainingNextCont = this.nextContinuations.swap(dummyNode)
+        var drainingNextFastCont = this.nextFastContinuations.swap(dummyNode)
+        while (let Some(node) <- drainingNextCont) {
+            drainingNextCont = node.nextNode
+            node.value.propagateFailure(fail)
         }
-        for (i in 0..nextFastContinuations.size) {
-            this.nextFastContinuations.elements[i].propagateFailure(fail)
+        while (let Some(node) <- drainingNextFastCont) {
+            drainingNextFastCont = node.nextNode
+            node.value.propagateFailure(fail)
         }
     }
 
+    // Assumes `this` task already complete
     internal func propagateFailureToContinuationsInline(fail: Failure): ?TaskChainLink {
-        for (i in 0..nextContinuations.size) {
-            let next = this.nextContinuations.elements[i].propagateFailureInline(fail) ?? continue
-            for (j in (i+1)..nextContinuations.size) {
-                this.nextContinuations.elements[j].propagateFailure(fail)
+        let dummyNode = ContinuationNode<T>(unsafe {zeroValue<Takes<T>>()}, None) // maybe static member for this?
+        // The atomic optional references need to be changed to a different value,
+        // even in the case where the current value is None,
+        // in order to force CAS operation failures in a certain situation.
+        // That situation is where another thread prepares
+        // to add a node after observing the tasks is not complete, but the task then does
+        // complete, and we reach this point before the new node is about to be added.
+        // This is why we created a new dummy node here in order to guarantee that it is
+        // distinct from the current head nodes.
+        var drainingNextCont = this.nextContinuations.swap(dummyNode)
+        var drainingNextFastCont = this.nextFastContinuations.swap(dummyNode)
+
+        while (let Some(node) <- drainingNextCont) {
+            drainingNextCont = node.nextNode
+            let out = node.value.propagateFailureInline(fail) ?? continue
+            while (let Some(node) <- drainingNextCont) {
+                drainingNextCont = node.nextNode
+                node.value.propagateFailure(fail)
             }
-            for (j in 0..nextFastContinuations.size) {
-                this.nextFastContinuations.elements[j].propagateFailure(fail)
+            while (let Some(node) <- drainingNextFastCont) {
+                drainingNextFastCont = node.nextNode
+                node.value.propagateFailure(fail)
             }
-            return next
+            return out
         }
-        for (i in 0..nextFastContinuations.size) {
-            let next = this.nextFastContinuations.elements[i].propagateFailureInline(fail) ?? continue
-            for (j in (i+1)..nextFastContinuations.size) {
-                this.nextFastContinuations.elements[j].propagateFailure(fail)
+        // If not yet returned, no error was recovered in normal continuations, but they
+        // have all been drained
+        while (let Some(node) <- drainingNextFastCont) {
+            drainingNextFastCont = node.nextNode
+            let out = node.value.propagateFailureInline(fail) ?? continue
+            while (let Some(node) <- drainingNextFastCont) {
+                drainingNextCont = node.nextNode
+                node.value.propagateFailure(fail)
             }
-            return next
+            return out
         }
+        // There was no error recovery in either the normal or fast continuations
         return None
     }
 
     internal func addContinuation(next: Takes<T>): Unit {
-        do {
-            let ret = unsafe { taskLockContinuationsOrAlreadyComplete(this) }
-            if (ret == 1) {
-                this.nextContinuations.add(next)
-                unsafe { taskUnlockContinuations(this) }
-                return
-            }
-            if (ret == 0) {
+        let newhead = ContinuationNode(next, None)
+        while (true) {
+            let oldhead = this.nextContinuations.load()
+            // The check for completion here must be done **after** loading `oldhead`
+            // So that if the task is observed not be complete, then a successful
+            // CAS operation below guarantees that the continuations draining has
+            // not started yet, even if the task had just completed by that time.
+            // (and therefore `next` will be correctly picked up by the thread executing the body of `this`).
+            if (unsafe { taskIsComplete(this) }) {
                 let output = match (this.state) {
                     case Completed(outcome) => outcome.unwrapOrThrow()
                     case Pending => throw IllegalStateException("Task is not complete")
@@ -271,20 +308,31 @@ sealed abstract class Task<T, S> <: Getable<T> where S <: Spawner {
                 this.spawner.launch(RunnableContinuation(next, output).inlineChainExecution)
                 return
             }
-            // otherwise it's been locked by another cjthread
-            sleep(Duration.Zero)
-        } while (true)
+            newhead.nextNode = oldhead
+            if (this.nextContinuations.compareAndSwap(oldhead, newhead)) {
+                // the swap is successful so no other thread has added to the continuations
+                // since setting `oldhead`, and more importantly:
+                // the thread executing the body of `this` has not started draining
+                // the continuations
+                return
+            }
+            // otherwise try again 
+            // - either there was a race with another thread calling this method
+            // - or the task completed and started draining `this.nextContinuations`:
+            //     the next iteration will spawn a thread for the continuation and return
+        }
     }
 
     internal func addFastContinuation(next: Takes<T>): Unit {
-        do {
-            let ret = unsafe { taskLockContinuationsOrAlreadyComplete(this) }
-            if (ret == 1) {
-                this.nextFastContinuations.add(next)
-                unsafe { taskUnlockContinuations(this) }
-                return
-            }
-            if (ret == 0) {
+        let newhead = ContinuationNode(next, None)
+        while (true) {
+            let oldhead = this.nextFastContinuations.load()
+            // The check for completion here must be done **after** loading `oldhead`
+            // So that if the task is observed not be complete, then a successful
+            // CAS operation below guarantees that the continuations draining has
+            // not started yet, even if the task had just completed by that time.
+            // (and therefore `next` will be correctly picked up by the thread executing the body of `this`).
+            if (unsafe { taskIsComplete(this) }) {
                 let output = match (this.state) {
                     case Completed(outcome) => outcome.unwrapOrThrow()
                     case Pending => throw IllegalStateException("Task is not complete")
@@ -293,9 +341,19 @@ sealed abstract class Task<T, S> <: Getable<T> where S <: Spawner {
                 this.spawner.launch(chainLink.inlineChainExecution)
                 return
             }
-            // otherwise it's been locked by another cjthread
-            sleep(Duration.Zero)
-        } while (true)
+            newhead.nextNode = oldhead
+            if (this.nextFastContinuations.compareAndSwap(oldhead, newhead)) {
+                // the swap is successful so no other thread has added to the fast continuations
+                // since setting `oldhead`, and more importantly:
+                // the thread executing the body of `this` has not started draining
+                // the continuations
+                return
+            }
+            // otherwise try again 
+            // - either there was a race with another thread calling this method
+            // - or the task completed and started draining `this.nextFastContinuations`:
+            //     the next iteration will spawn a thread for the continuation and return
+        }
     }
 
     /**
@@ -361,12 +419,12 @@ internal class InternalTask<I, T, S> <: Task<T, S> & Takes<I> where S <: Spawner
 
     public func next(input: I): ?TaskChainLink {
         let outcome = TaskOutcome<T>.captureOutcome<I>(executeFn, input)
-        completeAndWaitContinuationsUnlocked(outcome)
+        this.complete(outcome)
         if (Thread.currentThread.hasPendingCancellation) {
             this.propagateFailureToContinuations(Excepted(TaskCancelledException()))
             return None
         }
-        nextRunnableContinuation(outcome)
+        this.nextRunnableContinuation(outcome)
     }
 
     public func propagateFailure(fail: Failure): Unit {
@@ -387,13 +445,13 @@ internal class InternalCatch<E, T, S> <: Task<T, S> & Takes<T> & Takes<E> where 
     }
 
     public func next(input: T): ?TaskChainLink {
-        this.completeAndWaitContinuationsUnlocked(Success(input))
+        this.complete(Success(input))
         this.nextRunnableContinuation(input)
     }
 
     public func next(exc: E): ?TaskChainLink {
         let outcome = TaskOutcome<T>.captureOutcome<E>(handlerFn, exc)
-        this.completeAndWaitContinuationsUnlocked(outcome)
+        this.complete(outcome)
         if (Thread.currentThread.hasPendingCancellation) {
             this.propagateFailureToContinuations(Excepted(TaskCancelledException()))
             return None
@@ -428,12 +486,12 @@ internal class FlattenedTask<T, S> <: Task<T, S> & Takes<T> where S <: Spawner {
 
     public func next(input: T): ?TaskChainLink {
         let outcome = TaskOutcome<T>.Success(input)
-        completeAndWaitContinuationsUnlocked(outcome)
+        this.complete(outcome)
         if (Thread.currentThread.hasPendingCancellation) {
             this.propagateFailureToContinuations(Excepted(TaskCancelledException()))
             return None
         }
-        nextRunnableContinuation(outcome)
+        this.nextRunnableContinuation(outcome)
     }
 
     public func propagateFailure(fail: Failure): Unit {
