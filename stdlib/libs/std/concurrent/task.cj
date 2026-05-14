@@ -205,7 +205,7 @@ sealed abstract class Task<T, S> <: Getable<T> where S <: Spawner {
             // No non-fast continuations so may need to potentially return a continuation
             // of a fast continuation
             while (let Some(node) <- drainingNextFastCont) {
-                drainingNextCont = node.nextNode
+                drainingNextFastCont = node.nextNode
                 let out = RunnableContinuation<T>(node.value, output).next() ?? continue;
                 while (let Some(node) <- drainingNextFastCont) {
                     drainingNextFastCont = node.nextNode

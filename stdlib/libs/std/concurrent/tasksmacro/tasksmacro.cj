@@ -129,6 +129,25 @@ func parseArity(attr: Tokens): Int64 {
     n
 }
 
+func parseUpperBound(attr: Tokens): Int64 {
+    if (attr.size != 1 || attr.get(0).kind != TokenKind.INTEGER_LITERAL) {
+        throw Exception("@GenerateTasksUpTo[n] requires a single integer literal n > 1")
+    }
+    let n = parseUnsignedInteger(attr.get(0).value)
+    if (n <= 1) {
+        throw Exception("@GenerateTasksUpTo[n] requires n > 1")
+    }
+    n
+}
+
+func appendTasks(builder: TokensBuilder, n: Int64): Unit {
+    appendTasksClass(builder, n)
+    for (i in 1..(n + 1)) {
+        appendContinuationClass(builder, n, i)
+    }
+    appendTasksFunction(builder, n)
+}
+
 func appendTasksClass(builder: TokensBuilder, n: Int64): Unit {
     let className = identifier("Tasks${n}")
     let generics = typeParameters(n)
@@ -223,7 +242,7 @@ func appendTasksFunction(builder: TokensBuilder, n: Int64): Unit {
     let generics = typeParameters(n)
     let tupleType = tupleTypes(n)
     builder.append(quote(
-public func tasks<$(generics)>($(taskFunctionParameters(n))): Task<$(tupleType), S> where S <: Spawner {
+public func taskTuple<$(generics)>($(taskFunctionParameters(n))): Task<$(tupleType), S> where S <: Spawner {
     $(className)($(taskConstructorArguments(n)), task1.spawner)
 }
 ))
@@ -238,10 +257,21 @@ public func tasks<$(generics)>($(taskFunctionParameters(n))): Task<$(tupleType),
 public macro GenerateTasks(attr: Tokens, _: Tokens): Tokens {
     let n = parseArity(attr)
     let builder = TokensBuilder()
-    appendTasksClass(builder, n)
-    for (i in 1..(n + 1)) {
-        appendContinuationClass(builder, n, i)
+    appendTasks(builder, n)
+    builder.toTokens()
+}
+
+/*
+ * Usage:
+ *
+ * @GenerateTasksUpTo[16]
+ * struct _GenerateTasks {}
+ */
+public macro GenerateTasksUpTo(attr: Tokens, _: Tokens): Tokens {
+    let upperBound = parseUpperBound(attr)
+    let builder = TokensBuilder()
+    for (n in 2..(upperBound + 1)) {
+        appendTasks(builder, n)
     }
-    appendTasksFunction(builder, n)
     builder.toTokens()
 }
