@@ -13,13 +13,7 @@ MRT_EXPORT bool CJ_MCC_FutureIsComplete(const void* ptr) __attribute__((alias("M
 MRT_EXPORT void CJ_MCC_FutureNotifyAll(void* ptr) __attribute__((alias("MCC_FutureNotifyAll")));
 MRT_EXPORT void CJ_MCC_TaskInit(void* ptr) __attribute__((alias("MCC_TaskInit")));
 MRT_EXPORT bool CJ_MCC_TaskIsComplete(const void* ptr) __attribute__((alias("MCC_TaskIsComplete")));
-MRT_EXPORT bool CJ_MCC_TaskContinuationsAreLocked(const void* ptr)
-    __attribute__((alias("MCC_TaskContinuationsAreLocked")));
 MRT_EXPORT void CJ_MCC_TaskNotifyAll(void* ptr) __attribute__((alias("MCC_TaskNotifyAll")));
-MRT_EXPORT bool CJ_MCC_TaskLockContinuationsOrAlreadyComplete(const void* ptr)
-    __attribute__((alias("MRT_TaskLockContinuationsOrAlreadyComplete")));
-MRT_EXPORT void CJ_MCC_TaskUnlockContinuations(const void* ptr)
-    __attribute__((alias("MRT_TaskUnlockContinuations")));
 MRT_EXPORT void CJ_MCC_TaskNotifyEndThread(void* ptr) __attribute__((alias("MCC_TaskNotifyEndThread")));
 MRT_EXPORT int CJ_MCC_MutexInit(void* ptr) __attribute__((alias("MCC_MutexInit")));
 MRT_EXPORT bool CJ_MCC_MutexCheckStatus(void* ptr) __attribute__((alias("MCC_MutexCheckStatus")));

@@ -320,7 +320,7 @@ function(add_cangjie_library target_name)
             ${PREPARE_PACKAGE_SOURCES_CMD}
             COMMAND ${CMAKE_COMMAND} -E remove_directory ${macro_build_dir}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${macro_build_dir}
-            COMMAND ${CMAKE_COMMAND} -E env "CANGJIE_PATH=${CMAKE_BINARY_DIR}/modules/${output_cj_lib_dir}" "LIBRARY_PATH=${CMAKE_BINARY_DIR}/lib" "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/lib:${CMAKE_BINARY_DIR}/lib/${output_triple_name}_${CJNATIVE_BACKEND}${SANITIZER_SUBPATH}:$ENV{LD_LIBRARY_PATH}"
+            COMMAND ${CMAKE_COMMAND} -E env "CANGJIE_PATH=${CMAKE_BINARY_DIR}/modules/${output_cj_lib_dir}" "LIBRARY_PATH=${CMAKE_BINARY_DIR}/lib:${CMAKE_BINARY_DIR}/lib/${output_triple_name}_${CJNATIVE_BACKEND}${SANITIZER_SUBPATH}" "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/lib:${CMAKE_BINARY_DIR}/lib/${output_triple_name}_${CJNATIVE_BACKEND}${SANITIZER_SUBPATH}:$ENV{LD_LIBRARY_PATH}"
                     ${CMAKE_COMMAND} -E chdir ${macro_build_dir} ${COMPILE_CMD}
             COMMAND ${CMAKE_COMMAND} -E copy_if_different ${macro_build_dir}/${file_name}.cjo ${output_full_name}
             COMMAND ${CMAKE_COMMAND} -E copy_if_different ${macro_build_dir}/${file_name}.cjo.flag ${output_macro_flag_file}
@@ -348,7 +348,7 @@ function(add_cangjie_library target_name)
         COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/${output_dir}
         ${MKDIR_TEMP_FILES_CMD}
         ${PREPARE_PACKAGE_SOURCES_CMD}
-        COMMAND ${CMAKE_COMMAND} -E env "CANGJIE_PATH=${CMAKE_BINARY_DIR}/modules/${output_cj_lib_dir}"  "LIBRARY_PATH=${CMAKE_BINARY_DIR}/lib"
+        COMMAND ${CMAKE_COMMAND} -E env "CANGJIE_PATH=${CMAKE_BINARY_DIR}/modules/${output_cj_lib_dir}" "LIBRARY_PATH=${CMAKE_BINARY_DIR}/lib:${CMAKE_BINARY_DIR}/lib/${output_triple_name}_${CJNATIVE_BACKEND}${SANITIZER_SUBPATH}" "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/lib:${CMAKE_BINARY_DIR}/lib/${output_triple_name}_${CJNATIVE_BACKEND}${SANITIZER_SUBPATH}:$ENV{LD_LIBRARY_PATH}"
                 ${COMPILE_CMD}
         DEPENDS ${resolved_depends} ${source_files} ${CANGJIELIB_SOURCE_DIR}
         COMMENT "Generating ${target_name}")
@@ -366,7 +366,7 @@ function(add_cangjie_library target_name)
         add_custom_command(
             OUTPUT ${output_lto_bc_full_name}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/${output_bc_dir}
-            COMMAND ${CMAKE_COMMAND} -E env "CANGJIE_PATH=${CMAKE_BINARY_DIR}/modules/${output_cj_lib_dir}" "LIBRARY_PATH=${CMAKE_BINARY_DIR}/lib"
+            COMMAND ${CMAKE_COMMAND} -E env "CANGJIE_PATH=${CMAKE_BINARY_DIR}/modules/${output_cj_lib_dir}" "LIBRARY_PATH=${CMAKE_BINARY_DIR}/lib:${CMAKE_BINARY_DIR}/lib/${output_triple_name}_${CJNATIVE_BACKEND}${SANITIZER_SUBPATH}" "LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/lib:${CMAKE_BINARY_DIR}/lib/${output_triple_name}_${CJNATIVE_BACKEND}${SANITIZER_SUBPATH}:$ENV{LD_LIBRARY_PATH}"
                      ${COMPILE_BC_CMD}
             # ${target_name}_bc depends on ${target_name} so they will not run simultaneously. <target> and <target>_bc
             # compile the same package, which means they may write the same bc cache file. Running simultaneously

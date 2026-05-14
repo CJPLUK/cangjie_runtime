@@ -16,8 +16,8 @@ func taskInit<T, S>(task: Task<T, S>): Unit where S <: Spawner
 @Intrinsic
 func taskIsComplete<T, S>(task: Task<T, S>): Bool where S <: Spawner
 
-@Intrinsic
-func taskContinuationsAreLocked<T, S>(task: Task<T, S>): Bool where S <: Spawner
+// @Intrinsic
+// func taskContinuationsAreLocked<T, S>(task: Task<T, S>): Bool where S <: Spawner
 
 @Intrinsic
 func taskWait<T, S>(task: Task<T, S>, timeout: Int64): Unit where S <: Spawner
@@ -25,11 +25,11 @@ func taskWait<T, S>(task: Task<T, S>, timeout: Int64): Unit where S <: Spawner
 @Intrinsic
 func taskNotifyAll<T, S>(task: Task<T, S>): Unit where S <: Spawner
 
-@Intrinsic
-func taskLockContinuationsOrAlreadyComplete<T, S>(task: Task<T, S>): Int64 where S <: Spawner
+// @Intrinsic
+// func taskLockContinuationsOrAlreadyComplete<T, S>(task: Task<T, S>): Int64 where S <: Spawner
 
-@Intrinsic
-func taskUnlockContinuations<T, S>(task: Task<T, S>): Unit where S <: Spawner
+// @Intrinsic
+// func taskUnlockContinuations<T, S>(task: Task<T, S>): Unit where S <: Spawner
 
 @Intrinsic
 func taskNotifyEndThread<T, S>(task: Task<T, S>): Unit where S <: Spawner
