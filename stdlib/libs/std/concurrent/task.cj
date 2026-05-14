@@ -171,13 +171,6 @@ sealed abstract class Task<T, S> <: Getable<T> where S <: Spawner {
         unsafe { taskNotifyAll(this) } // wake up the `.get()` threads
     }
 
-    internal func completeAndWaitContinuationsUnlocked(outcome: TaskOutcome<T>): Unit {
-        this.complete(outcome)
-        while (unsafe { taskContinuationsAreLocked(this) }) {
-            sleep(Duration.Zero)
-        }
-    }
-
     // Assumes Task already marked as complete
     internal func nextRunnableContinuation(output: T): ?TaskChainLink {
         let dummyNode = ContinuationNode<T>(unsafe {zeroValue<Takes<T>>()}, None) // maybe static member for this?

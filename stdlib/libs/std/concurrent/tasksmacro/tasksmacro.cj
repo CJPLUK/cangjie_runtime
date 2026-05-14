@@ -159,7 +159,7 @@ internal class $(className)<$(generics)> <: Task<$(tupleType), S> & Takes<Unit> 
 
     public func next(_: Unit): ?TaskChainLink {
         let outcome = $(taskFields(n))
-        this.completeAndWaitContinuationsUnlocked(Success(outcome))
+        this.complete(Success(outcome))
         if (Thread.currentThread.hasPendingCancellation) {
             this.propagateFailureToContinuations(Excepted(TaskCancelledException()))
             return None
