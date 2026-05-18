@@ -76,9 +76,7 @@ func repeated(n: Int64, build: (Int64) -> Tokens): ArrayList<Tokens> {
 }
 
 func typeParameters(n: Int64): Tokens {
-    let params = repeated(n, { i => identifierTokens("T${i}") })
-    params.add(identifierTokens("S"))
-    commaSeparated(params)
+    commaSeparated(repeated(n, { i => identifierTokens("T${i}") }))
 }
 
 func tupleTypes(n: Int64): Tokens {
@@ -93,13 +91,13 @@ func taskFields(n: Int64): Tokens {
 
 func constructorParameters(n: Int64): Tokens {
     commaSeparated(repeated(n, {
-        i => quote($(identifier("t${i}")): Task<$(identifier("T${i}")), S>)
+        i => quote($(identifier("t${i}")): Task<$(identifier("T${i}"))>)
     }))
 }
 
 func taskFunctionParameters(n: Int64): Tokens {
     commaSeparated(repeated(n, {
-        i => quote($(identifier("task${i}")): Task<$(identifier("T${i}")), S>)
+        i => quote($(identifier("task${i}")): Task<$(identifier("T${i}"))>)
     }))
 }
 
@@ -153,7 +151,7 @@ func appendTasksClass(builder: TokensBuilder, n: Int64): Unit {
     let generics = typeParameters(n)
     let tupleType = tupleTypes(n)
     builder.append(quote(
-internal class $(className)<$(generics)> <: Task<$(tupleType), S> & Takes<Unit> where S <: Spawner {
+internal class $(className)<$(generics)> <: Task<$(tupleType)> & Takes<Unit> {
     let tasksLeft = AtomicUInt32($(n))
     let failed = AtomicBool(false)
 ))
@@ -164,7 +162,7 @@ internal class $(className)<$(generics)> <: Task<$(tupleType), S> & Takes<Unit> 
     }
     builder.append(quote(
 
-    $(className)($(constructorParameters(n)), spawner: S) {
+    $(className)($(constructorParameters(n)), spawner: Spawner) {
         super(spawner)
         initNativeResources()
 ))
@@ -213,7 +211,7 @@ func appendContinuationClass(builder: TokensBuilder, n: Int64, i: Int64): Unit {
     let typeName = identifier("T${i}")
     let fieldName = identifier("t${i}")
     builder.append(quote(
-internal class $(className)<$(generics)> <: Takes<$(typeName)> where S <: Spawner {
+internal class $(className)<$(generics)> <: Takes<$(typeName)> {
     $(className)(let wrapped: $(wrappedName)<$(generics)>) {}
 
     public func next(t: $(typeName)): ?TaskChainLink {
@@ -242,7 +240,7 @@ func appendTasksFunction(builder: TokensBuilder, n: Int64): Unit {
     let generics = typeParameters(n)
     let tupleType = tupleTypes(n)
     builder.append(quote(
-public func taskTuple<$(generics)>($(taskFunctionParameters(n))): Task<$(tupleType), S> where S <: Spawner {
+public func taskTuple<$(generics)>($(taskFunctionParameters(n))): Task<$(tupleType)> {
     $(className)($(taskConstructorArguments(n)), task1.spawner)
 }
 ))

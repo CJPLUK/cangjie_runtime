@@ -10,13 +10,13 @@ import std.concurrent.tasksmacro.*
 // Handwritten two-task implementation as a commented example of
 // the declarations that `@GenerateTasks[2]` is expected to expand into.
 /*
-internal class Tasks2<T1, T2, S> <: Task<(T1, T2), S> & Takes<Unit> where S <: Spawner {
+internal class Tasks2<T1, T2> <: Task<(T1, T2)> & Takes<Unit> {
     let tasksLeft = AtomicUInt32(2)
     let failed = AtomicBool(false)
     var t1 = unsafe { zeroValue<T1>() }
     var t2 = unsafe { zeroValue<T2>() }
 
-    Tasks2(t1: Task<T1, S>, t2: Task<T2, S>, spawner: S) {
+    Tasks2(t1: Task<T1>, t2: Task<T2>, spawner: Spawner) {
         super(spawner)
         initNativeResources()
         t1.addFastContinuation(Tasks2_1(this))
@@ -52,8 +52,8 @@ internal class Tasks2<T1, T2, S> <: Task<(T1, T2), S> & Takes<Unit> where S <: S
     }
 }
 
-internal class Tasks2_1<T1, T2, S> <: Takes<T1> where S <: Spawner {
-    Tasks2_1(let wrapped: Tasks2<T1, T2, S>) {}
+internal class Tasks2_1<T1, T2> <: Takes<T1> {
+    Tasks2_1(let wrapped: Tasks2<T1, T2>) {}
 
     public func next(t: T1): ?TaskChainLink {
         this.wrapped.t1 = t
@@ -75,8 +75,8 @@ internal class Tasks2_1<T1, T2, S> <: Takes<T1> where S <: Spawner {
     }
 }
 
-internal class Tasks2_2<T1, T2, S> <: Takes<T2> where S <: Spawner {
-    Tasks2_2(let wrapped: Tasks2<T1, T2, S>) {}
+internal class Tasks2_2<T1, T2> <: Takes<T2> {
+    Tasks2_2(let wrapped: Tasks2<T1, T2>) {}
 
     public func next(t: T2): ?TaskChainLink {
         this.wrapped.t2 = t
@@ -97,7 +97,7 @@ internal class Tasks2_2<T1, T2, S> <: Takes<T2> where S <: Spawner {
     }
 }
 
-public func tasks<T1, T2, S>(task1: Task<T1, S>, task2: Task<T2, S>): Task<(T1, T2), S> where S <: Spawner {
+public func tasks<T1, T2>(task1: Task<T1>, task2: Task<T2>): Task<(T1, T2)> {
     Tasks2(task1, task2, task1.spawner) // I really want to refactor this spawner business
 }
 */

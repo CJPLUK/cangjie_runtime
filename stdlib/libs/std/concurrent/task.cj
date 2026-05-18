@@ -11,28 +11,28 @@ import std.core.zeroValue
 import std.sync.*
 
 @Intrinsic
-func taskInit<T, S>(task: Task<T, S>): Unit where S <: Spawner
+func taskInit<T>(task: Task<T>): Unit
 
 @Intrinsic
-func taskIsComplete<T, S>(task: Task<T, S>): Bool where S <: Spawner
+func taskIsComplete<T>(task: Task<T>): Bool
 
 // @Intrinsic
-// func taskContinuationsAreLocked<T, S>(task: Task<T, S>): Bool where S <: Spawner
+// func taskContinuationsAreLocked<T>(task: Task<T>): Bool
 
 @Intrinsic
-func taskWait<T, S>(task: Task<T, S>, timeout: Int64): Unit where S <: Spawner
+func taskWait<T>(task: Task<T>, timeout: Int64): Unit
 
 @Intrinsic
-func taskNotifyAll<T, S>(task: Task<T, S>): Unit where S <: Spawner
+func taskNotifyAll<T>(task: Task<T>): Unit
 
 // @Intrinsic
-// func taskLockContinuationsOrAlreadyComplete<T, S>(task: Task<T, S>): Int64 where S <: Spawner
+// func taskLockContinuationsOrAlreadyComplete<T>(task: Task<T>): Int64
 
 // @Intrinsic
-// func taskUnlockContinuations<T, S>(task: Task<T, S>): Unit where S <: Spawner
+// func taskUnlockContinuations<T>(task: Task<T>): Unit
 
 @Intrinsic
-func taskNotifyEndThread<T, S>(task: Task<T, S>): Unit where S <: Spawner
+func taskNotifyEndThread<T>(task: Task<T>): Unit
 
 @FastNative
 foreign func CJ_CORE_PrintOomHint(): Unit
@@ -145,20 +145,20 @@ public interface Getable<T> {
     func get(timeout: Duration): T
 }
 
-public interface Chainable<T, S> where S <: Spawner {
-    func then<U>(f: (T) -> U): Task<U, S>
-    func flatThen<U>(f: (T) -> Task<U, S>): Task<U, S>
-    func recover<E>(h: (E) -> T): Task<T, S> where E <: Exception
+public interface Chainable<T> {
+    func then<U>(f: (T) -> U): Task<U>
+    func flatThen<U>(f: (T) -> Task<U>): Task<U>
+    func recover<E>(h: (E) -> T): Task<T> where E <: Exception
 }
 
-sealed abstract class Task<T, S> <: Getable<T> where S <: Spawner {
+sealed abstract class Task<T> <: Getable<T> {
     internal var state: TaskState<T> = Pending
     internal var nextContinuations = AtomicOptionReference<ContinuationNode<T>>(None)
     internal var nextFastContinuations = AtomicOptionReference<ContinuationNode<T>>(None)
     public var nativeResources = VArray<Int64, $15>(repeat: 0)
-    let spawner: S
+    let spawner: Spawner
 
-    Task(s: S) {
+    Task(s: Spawner) {
         spawner = s
     }
 
@@ -404,8 +404,8 @@ sealed abstract class Task<T, S> <: Getable<T> where S <: Spawner {
     }
 }
 
-internal class InternalTask<I, T, S> <: Task<T, S> & Takes<I> where S <: Spawner {
-    InternalTask(spawner: S, internal var executeFn: (I) -> T) {
+internal class InternalTask<I, T> <: Task<T> & Takes<I> {
+    InternalTask(spawner: Spawner, internal var executeFn: (I) -> T) {
         super(spawner)
         initNativeResources()
     }
@@ -431,8 +431,8 @@ internal class InternalTask<I, T, S> <: Task<T, S> & Takes<I> where S <: Spawner
     }
 }
 
-internal class InternalCatch<E, T, S> <: Task<T, S> & Takes<T> & Takes<E> where E <: Exception, S <: Spawner {
-    InternalCatch(spawner: S, internal var handlerFn: (E) -> T) {
+internal class InternalCatch<E, T> <: Task<T> & Takes<T> & Takes<E> where E <: Exception {
+    InternalCatch(spawner: Spawner, internal var handlerFn: (E) -> T) {
         super(spawner)
         this.initNativeResources()
     }
@@ -471,8 +471,8 @@ internal class InternalCatch<E, T, S> <: Task<T, S> & Takes<T> & Takes<E> where 
     }
 }
 
-internal class FlattenedTask<T, S> <: Task<T, S> & Takes<T> where S <: Spawner {
-    FlattenedTask(spawner: S) {
+internal class FlattenedTask<T> <: Task<T> & Takes<T> {
+    FlattenedTask(spawner: Spawner) {
         super(spawner)
         initNativeResources()
     }
@@ -499,21 +499,21 @@ internal class FlattenedTask<T, S> <: Task<T, S> & Takes<T> where S <: Spawner {
 }
 
 
-extend<T, S> Task<T, S> <: Chainable<T, S> where S <: Spawner {
-    public func then<U>(fn: (T) -> U): Task<U, S> {
-        let next = InternalTask<T, U, S>(this.spawner, fn)
+extend<T> Task<T> <: Chainable<T> {
+    public func then<U>(fn: (T) -> U): Task<U> {
+        let next = InternalTask<T, U>(this.spawner, fn)
         this.addContinuation(next)
         return next
     }
 
-    public func recover<E>(h: (E) -> T): Task<T, S> where E <: Exception {
-        let next = InternalCatch<E, T, S>(this.spawner, h)
+    public func recover<E>(h: (E) -> T): Task<T> where E <: Exception {
+        let next = InternalCatch<E, T>(this.spawner, h)
         this.addContinuation(next)
         return next
     }
 
-    public func flatThen<U>(fn: (T) -> Task<U, S>): Task<U, S> { // maybe S here should be a separate independent param
-        let next = FlattenedTask<U, S>(this.spawner)
+    public func flatThen<U>(fn: (T) -> Task<U>): Task<U> {
+        let next = FlattenedTask<U>(this.spawner)
         // This particular continuation cannot be accessed by the user so could have a stripped
         // version? Maybe a new implementer of Takes<T> which is not Task?
         this.then<Unit> { t =>
@@ -523,15 +523,15 @@ extend<T, S> Task<T, S> <: Chainable<T, S> where S <: Spawner {
     }
 }
 
-public func task<T>(f: () -> T): Task<T, DefaultSpawner> {
+public func task<T>(f: () -> T): Task<T> {
     let spawner = DefaultSpawner()
-    let output = InternalTask<Unit, T, DefaultSpawner>(spawner) {_ => f()}
+    let output = InternalTask<Unit, T>(spawner) {_ => f()}
     spawner.launch(RunnableContinuation<Unit>(output, ()).inlineChainExecution)
     output
 }
 
-public func task<T, S>(spawner: S, f: () -> T): Task<T, S> where S <: Spawner {
-    let output = InternalTask<Unit, T, S>(spawner) {_ => f()}
+public func task<T>(spawner: Spawner, f: () -> T): Task<T> {
+    let output = InternalTask<Unit, T>(spawner) {_ => f()}
     spawner.launch(RunnableContinuation<Unit>(output, ()).inlineChainExecution)
     output
 }
