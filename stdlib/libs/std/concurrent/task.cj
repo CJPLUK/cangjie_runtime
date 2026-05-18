@@ -146,8 +146,8 @@ public interface Getable<T> {
 }
 
 public interface Chainable<T> {
-    func then<U>(f: (T) -> U): Task<U>
-    func flatThen<U>(f: (T) -> Task<U>): Task<U>
+    func map<U>(f: (T) -> U): Task<U>
+    func flatMap<U>(f: (T) -> Task<U>): Task<U>
     func recover<E>(h: (E) -> T): Task<T> where E <: Exception
 }
 
@@ -500,7 +500,7 @@ internal class FlattenedTask<T> <: Task<T> & Takes<T> {
 
 
 extend<T> Task<T> <: Chainable<T> {
-    public func then<U>(fn: (T) -> U): Task<U> {
+    public func map<U>(fn: (T) -> U): Task<U> {
         let next = InternalTask<T, U>(this.spawner, fn)
         this.addContinuation(next)
         return next
@@ -512,11 +512,11 @@ extend<T> Task<T> <: Chainable<T> {
         return next
     }
 
-    public func flatThen<U>(fn: (T) -> Task<U>): Task<U> {
+    public func flatMap<U>(fn: (T) -> Task<U>): Task<U> {
         let next = FlattenedTask<U>(this.spawner)
         // This particular continuation cannot be accessed by the user so could have a stripped
         // version? Maybe a new implementer of Takes<T> which is not Task?
-        this.then<Unit> { t =>
+        this.map<Unit> { t =>
             fn(t).addFastContinuation(next)
         }
         return next
