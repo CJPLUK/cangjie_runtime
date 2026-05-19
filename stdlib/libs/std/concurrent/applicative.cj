@@ -1,8 +1,82 @@
 package std.concurrent
 
+import std.core.zeroValue
 import std.sync.{AtomicUInt32, AtomicBool}
 import std.concurrent.tasksmacro.*
 
+internal class TaskArray<T> <: Task<Array<T>> & Takes<Unit> {
+    let tasksLeft: AtomicUInt32
+    let failed = AtomicBool(false)
+    let results: Array<T>
+
+    TaskArray(arr: Array<Task<T>>, spawner: Spawner) {
+        super(spawner)
+        results = Array(arr.size, repeat: unsafe { zeroValue<T>() })
+        tasksLeft = AtomicUInt32(UInt32(arr.size))
+        this.initNativeResources()
+        for (i in 0..arr.size) {
+            arr[i].addFastContinuation(TaskArrayHook(this, i))
+        }
+    }
+
+    public func next(_: Unit): ?TaskChainLink {
+        let outcome = this.results
+        this.complete(Success(outcome))
+        if (Thread.currentThread.hasPendingCancellation) {
+            this.propagateFailureToContinuations(Excepted(TaskCancelledException()))
+            return None
+        }
+        nextRunnableContinuation(outcome)
+    }
+
+    public func propagateFailure(fail: Failure): Unit {
+        if (!this.failed.swap(true)) {
+            // has not failed already
+            this.complete(Fail(fail))
+            this.propagateFailureToContinuations(fail)
+        }
+    }
+
+    public func propagateFailureInline(fail: Failure): ?TaskChainLink {
+        if (!this.failed.swap(true)) {
+            // has not failed already
+            this.complete(Fail(fail))
+            this.propagateFailureToContinuationsInline(fail)
+        } else {
+            None
+        }
+    }
+}
+
+internal class TaskArrayHook<T> <: Takes<T> {
+    TaskArrayHook(let wrapped: TaskArray<T>, let idx: Int64) {}
+
+    public func next(t: T): ?TaskChainLink {
+        this.wrapped.results[idx] = t
+        if (this.wrapped.tasksLeft.fetchSub(1) == 1) {
+            // this was the last one
+            // this.wrapped.failed should also be false, but maybe add check?
+            RunnableContinuation(this.wrapped, ())
+        } else {
+            None
+        }
+    }
+
+    public func propagateFailure(fail: Failure): Unit {
+        this.wrapped.propagateFailure(fail)
+    }
+
+    public func propagateFailureInline(fail: Failure): ?TaskChainLink {
+        this.wrapped.propagateFailureInline(fail)
+    }
+}
+
+public func taskArray<T>(arr: Array<Task<T>>): Task<Array<T>> {
+    if (arr.size==0) {
+        return task {[]}
+    }
+    TaskArray(arr, arr[0].spawner)
+}
 
 // =====================================
 // Hand-written reference implementation
@@ -98,7 +172,7 @@ internal class Tasks2_2<T1, T2> <: Takes<T2> {
 }
 
 public func tasks<T1, T2>(task1: Task<T1>, task2: Task<T2>): Task<(T1, T2)> {
-    Tasks2(task1, task2, task1.spawner) // I really want to refactor this spawner business
+    Tasks2(task1, task2, task1.spawner)
 }
 */
 
