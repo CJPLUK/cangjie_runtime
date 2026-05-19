@@ -883,7 +883,7 @@ add_cangjie_library(
     MODULE_NAME "std"
     SOURCES ${CONCURRENT_TASKSMACRO_SRCS}
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/std/concurrent/tasksmacro
-    DEPENDS ${CONCURRENT_TASKSMACRO_DEPENDENCIES})
+    DEPENDS ${CONCURRENT_TASKSMACRO_DEPENDENCIES} std-core std-ast std-collection)
 
 add_cangjie_library(
     cangjie${BACKEND_TYPE}Concurrent

@@ -332,7 +332,9 @@ function(add_cangjie_library target_name)
             ${target_name} ALL
             DEPENDS ${output_full_name} ${output_macro_full_name} ${CANGJIELIB_DEPENDS})
 
-        set_target_properties(${target_name} PROPERTIES CJ_OUTPUT_FILE ${output_full_name})
+        # Downstream package builds load the generated macro shared object at compile time,
+        # so track the .so as the primary dependency output to avoid parallel build races.
+        set_target_properties(${target_name} PROPERTIES CJ_OUTPUT_FILE ${output_macro_full_name})
 
         if (CANGJIE_SANITIZER_SUPPORT_ENABLED)
             return()
