@@ -31,9 +31,6 @@ func taskNotifyAll<T>(task: Task<T>): Unit
 // @Intrinsic
 // func taskUnlockContinuations<T>(task: Task<T>): Unit
 
-@Intrinsic
-func taskNotifyEndThread<T>(task: Task<T>): Unit
-
 @FastNative
 foreign func CJ_CORE_PrintOomHint(): Unit
 

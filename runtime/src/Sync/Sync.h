@@ -47,8 +47,8 @@ struct CJTask {
 #else
     long long int data[3]; // should probs get away with 2
 #endif
-    std::atomic<uint_fast8_t> state;
-    std::atomic<int_fast8_t> isWaitQueueInit;
+    std::atomic<bool> completeFlag;
+    std::atomic<int> isWaitQueueInit;
     Waitqueue wq;
 };
 

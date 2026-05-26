@@ -30,15 +30,7 @@ extern "C" {
 #endif
 
 static constexpr int64_t INVALID_THREAD_ID = -1LL;
-// Bits for the CJTask `state`
-static constexpr uint_fast8_t FUTURE_COMPLETED_BIT = 0b10;
-// Values for the CJTask `isWaitQueueInit`
-static constexpr int_fast8_t WQ_UNINITIALISED = 0;
-static constexpr int_fast8_t WQ_INITIALISED = 1;
-// Other thread initialising the wait queue:
-static constexpr int_fast8_t WQ_INITIALISING = -1;
 
-// PROBABLY NEEDS ADJUSTING TO ADD TASKS
 void ReleaseNativeResource(BaseObject* obj)
 {
     TypeInfo* typeInfo = obj->GetTypeInfo();
@@ -81,8 +73,8 @@ void MCC_FutureInit(void* ptr)
 void MCC_TaskInit(void* ptr)
 {
     CJTask* task = reinterpret_cast<CJTask*>(ptr);
-    task->state = 0;
-    task->isWaitQueueInit = WQ_UNINITIALISED;
+    task->completeFlag = false;
+    task->isWaitQueueInit = 0;
 }
 
 bool MCC_FutureIsComplete(void* ptr)
@@ -102,13 +94,7 @@ bool MCC_FutureIsComplete(void* ptr)
 bool MCC_TaskIsComplete(void* ptr)
 {
     CJTask* task = CastToT<CJTask*>(ptr);
-    bool res = !!(task->state.load() & FUTURE_COMPLETED_BIT);
-#if defined(CANGJIE_TSAN_SUPPORT)
-    // if (res) {
-        // Sanitizer::TsanAcquire(future);
-    // }
-#endif
-    return res;
+    return task->completeFlag.load();
 }
 
 void MRT_FutureWait(const void* ptr, int64_t timeout)
@@ -154,34 +140,28 @@ void MRT_FutureWait(const void* ptr, int64_t timeout)
 void MRT_TaskWait(const void* ptr, int64_t timeout)
 {
     CJTask* task = CastToT<CJTask*>(ptr);
-    if (task->state.load() & FUTURE_COMPLETED_BIT) {
-#if defined(CANGJIE_TSAN_SUPPORT)
-        // Sanitizer::TsanAcquire(future);
-#endif
-        return;
-    }
     constexpr int newWaitQueueMaxTimes = 32;
     for (int i = 0;;) {
         if (i > newWaitQueueMaxTimes) {
             LOG(RTLOG_ERROR, "FutureWait timeout failed.");
             break;
         }
-        int_fast8_t oldWaitQueue = task->isWaitQueueInit.load();
-        if (oldWaitQueue == WQ_INITIALISING) {
+        int oldWaitQueue = task->isWaitQueueInit.load();
+        if (oldWaitQueue == -1) {
             continue;
         }
-        if (oldWaitQueue == WQ_INITIALISED) {
+        if (oldWaitQueue == 1) {
             break;
         }
 
-        if (task->isWaitQueueInit.compare_exchange_weak(oldWaitQueue, WQ_INITIALISING)) {
+        if (task->isWaitQueueInit.compare_exchange_weak(oldWaitQueue, -1)) {
             if (MRT_NewWaitQueue(reinterpret_cast<void*>(&task->wq)) != 0) {
                 LOG(RTLOG_ERROR, "waitqueue init failed!\n");
-                task->isWaitQueueInit.store(WQ_UNINITIALISED);
+                task->isWaitQueueInit.store(0);
                 ++i;
                 continue;
             }
-            task->isWaitQueueInit.store(WQ_INITIALISED);
+            task->isWaitQueueInit.store(1);
             break;
         }
     }
@@ -216,24 +196,17 @@ void MCC_TaskNotifyAll(const void* ptr)
 {
     CJTask* task = CastToT<CJTask*>(ptr);
     // Mark as complete
-    task->state.fetch_or(FUTURE_COMPLETED_BIT);
+    task->completeFlag.store(true);
     int waitQueue = task->isWaitQueueInit.load();
     // Waitqueue hasn't been created or is being created.
-    if (waitQueue != WQ_UNINITIALISED && waitQueue != WQ_INITIALISING) {
-        // In the edge case where it is "initializing", the attempt to park
-        // on the waitQueue will fail because of the final callback to check
-        // that the future is not completed (so then that thread will not
-        // need to be resumed, because it will not be parked).
-        MRT_ResumeAll(&task->wq, NULL, task);
+    if (waitQueue == 0 || waitQueue == -1) {
+        return;
     }
-}
-
-void MCC_TaskNotifyEndThread(const void* ptr) {
-    CJTask* task = CastToT<CJTask*>(ptr);
-    // This function will be called just before the cjthread completes.
-#if defined(CANGJIE_TSAN_SUPPORT)
-    // Sanitizer::TsanRelease(future, Sanitizer::ReleaseType::K_RELEASE_MERGE);
-#endif
+    // In the edge case where it is "initializing", the attempt to park
+    // on the waitQueue will fail because of the final callback to check
+    // that the future is not completed (so then that thread will not
+    // need to be resumed, because it will not be parked).
+    MRT_ResumeAll(&task->wq, NULL, task);
 }
 
 int MCC_MutexInit(void* ptr)
