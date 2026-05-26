@@ -8,7 +8,7 @@
 package std.unittest.mock
 
 import std.collection.*
-import std.sync.{ReentrantMutex, AtomicUInt64}
+import std.sync.*
 import std.unittest.mock.internal.*
 
 private const GLOBAL_SESSION_NAME = "Global"
