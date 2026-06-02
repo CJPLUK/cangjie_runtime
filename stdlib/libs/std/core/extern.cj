@@ -1,4 +1,4 @@
-package std.interop
+package std.core
 
 public class ExternConversionException <: Exception {
     public ExternConversionException(message: String) {
