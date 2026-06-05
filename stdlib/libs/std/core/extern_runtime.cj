@@ -1,13 +1,43 @@
 package std.core
 
-public class ExternConversionException <: Exception {
-    public ExternConversionException(message: String) {
+// MemberAccessException thrown if an attempt is made to access or update a non-existing member
+public class MemberAccessException <: Exception {
+    public MemberAccessException(message: String) {
         super(message)
     }
 }
 
+// FunctionAccessException thrown if an attempt is made to access a non-existing function
+public class FunctionAccessException <: Exception {
+    public FunctionAccessException(message: String) {
+        super(message)
+    }
+}
+
+// FunctionCallException thrown if an attempt is made to call a function with the wrong arguments
+public class FunctionCallException <: Exception {
+    public FunctionCallException(message: String) {
+        super(message)
+    }
+}
+
+// IndexAccessException thrown if an attempt is made to access or update with the wrong index, including out-of-bounds errors
+public class IndexAccessException <: Exception {
+    public IndexAccessException(message: String) {
+        super(message)
+    }
+}
+
+// ExternDynamicException thrown if a function in the foreign runtime throws a runtime exception
 public class ExternDynamicException <: Exception {
     public ExternDynamicException(message: String) {
+        super(message)
+    }
+}
+
+// ExternConversionException thrown if data cannot be converted to or from an Extern type as required.
+public class ExternConversionException <: Exception {
+    public ExternConversionException(message: String) {
         super(message)
     }
 }
