@@ -26,5 +26,8 @@ public interface Runtime<T> where T <: Runtime<T> {
 }
 
 public struct Extern<T> where T <: Runtime<T> {
-    public Extern(public let content : Any) { }
+    public Extern(private let payload: Any) { }
 }
+
+@Intrinsic
+public func getPayload<T>(e: Extern<T>): Any where T<: Runtime<T>
