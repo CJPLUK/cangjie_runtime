@@ -56,7 +56,12 @@ public interface Runtime<T> where T <: Runtime<T> {
 }
 
 public struct Extern<T> where T <: Runtime<T> {
-    public Extern(private let payload: Any) { }
+    private let payload: Any
+    public Extern(payload: Any) {
+        // Note: this is a normal field assignment and not a dynamic member update. Compiler
+        // treats this as a special case and doesn't desugar it.
+        this.payload = payload
+    }
 }
 
 @Intrinsic
