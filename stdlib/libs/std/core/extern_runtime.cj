@@ -16,10 +16,14 @@ public enum Extern<T> where T <: ForeignRuntime<T> {
     | ExternIndexedUpdate(Extern<T>, Any, Any)
     | ExternFunctionCall(Extern<T>, Array<Any>)
     | ExternCompoundAssignment(Extern<T>, String, Any)
+    | ExternSequence(Extern<T>, Extern<T>)
     | ...
 
     public static func evalDerived(e: Extern<T>): Extern<T> {
         match (e) {
+            case ExternSequence(e1, e2) =>
+                T.eval(e1)
+                return T.eval(e2)
             case _ => throw ExternUnsupportedOperation()
         }
     }
