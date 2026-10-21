@@ -54,6 +54,16 @@ set_target_properties(cangjie-std-binary PROPERTIES LINKER_LANGUAGE C)
 install(TARGETS cangjie-std-binary DESTINATION lib/${output_triple_name}_${CJNATIVE_BACKEND}${SANITIZER_SUBPATH})
 
 make_cangjie_lib(
+    std-experimental IS_SHARED
+    DEPENDS cangjie${BACKEND_TYPE}Experimental
+    CANGJIE_STD_LIB_DEPENDS std-core
+    OBJECTS ${output_cj_object_dir}/std/experimental.o)
+
+add_library(cangjie-std-experimental STATIC ${output_cj_object_dir}/std/experimental.o)
+set_target_properties(cangjie-std-experimental PROPERTIES LINKER_LANGUAGE C)
+install(TARGETS cangjie-std-experimental DESTINATION lib/${output_triple_name}_${CJNATIVE_BACKEND}${SANITIZER_SUBPATH})
+
+make_cangjie_lib(
     std-sync IS_SHARED
     DEPENDS cangjie${BACKEND_TYPE}Sync
     CANGJIE_STD_LIB_DEPENDS std-core std-time
@@ -909,6 +919,15 @@ add_cangjie_library(
     SOURCES ${BINARY_SRCS}
     SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/std/binary
     DEPENDS ${BINARY_DEPENDENCIES})
+
+add_cangjie_library(
+    cangjie${BACKEND_TYPE}Experimental IS_STDLIB IS_CJNATIVE_BACKEND
+    NO_SUB_PKG
+    PACKAGE_NAME "experimental"
+    MODULE_NAME "std"
+    SOURCES ${EXPERIMENTAL_SRCS}
+    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/std/experimental
+    DEPENDS ${EXPERIMENTAL_DEPENDENCIES})
 
 add_cangjie_library(
         cangjie${BACKEND_TYPE}Net IS_STDLIB IS_CJNATIVE_BACKEND

@@ -7,6 +7,7 @@
 add_subdirectory(core)
 add_subdirectory(runtime)
 add_subdirectory(binary)
+add_subdirectory(experimental)
 add_subdirectory(unicode)
 add_subdirectory(sort)
 add_subdirectory(sync)
