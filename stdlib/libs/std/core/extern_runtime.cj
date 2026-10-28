@@ -9,29 +9,29 @@
 package std.core
 
 @Intrinsic
-func getExtern<T>(e: Extern<T>): Any where T <: ForeignRuntime<T>
+func getExtern<T>(e: Extern<T>): Any where T <: ForeignRuntime<T> // cjlint-ignore !G.ITF.04
 
 @Intrinsic
-func setExtern<T>(e: Extern<T>, payload: Any): Unit where T <: ForeignRuntime<T>
+func setExtern<T>(e: Extern<T>, payload: Any): Unit where T <: ForeignRuntime<T> // cjlint-ignore !G.ITF.04
 
 public struct Extern<T> where T <: ForeignRuntime<T> {
     private var payload: Any = ()
 
-    public Extern(payload: Any) {
+    public Extern(payload: Any) { // cjlint-ignore !G.ITF.04
         setExtern(this, payload)
     }
 
-    public static func getPayload(e: Extern<T>): Any {
+    public static func getPayload(e: Extern<T>): Any { // cjlint-ignore !G.ITF.04
         getExtern(e)
     }
 }
 
 public interface ForeignRuntime<T> where T <: ForeignRuntime<T> {
     static func memberAccess(e: Extern<T>, field: String): Extern<T>
-    static func indexedAccess(e: Extern<T>, arg: Any): Extern<T>
+    static func indexedAccess(e: Extern<T>, arg: Any): Extern<T> // cjlint-ignore !G.ITF.04
 
-    static func memberUpdate(e: Extern<T>, field: String, value: Any): Unit
-    static func indexedUpdate(e: Extern<T>, field: Any, value: Any): Unit
+    static func memberUpdate(e: Extern<T>, field: String, value: Any): Unit // cjlint-ignore !G.ITF.04
+    static func indexedUpdate(e: Extern<T>, field: Any, value: Any): Unit // cjlint-ignore !G.ITF.04
 
     static func functionCall(e: Extern<T>, args: Array<Any>): Extern<T>
 
