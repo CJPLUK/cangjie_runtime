@@ -7844,7 +7844,6 @@ Duration 4: 3h
 Duration 1 is not greater than or equal to Duration 4
 ```
 
-<!--Del-->
 ## struct Extern\<T> where T <: ForeignRuntime\<T>
 
 ```cangjie
@@ -7857,10 +7856,6 @@ public struct Extern<T> where T <: ForeignRuntime<T> {
 Function: Represents a value of the foreign runtime `T`.
 
 Member accesses, index accesses, calls, and member and element updates on instances of this type are implemented by the static functions of `T`. For details, see [ForeignRuntime](core_package_interfaces.md#interface-foreignruntimet-where-t--foreignruntimet).
-
-> **Note:**
->
-> Unsupported platform: OpenHarmony.
 
 ### init(Any)
 
@@ -7898,7 +7893,6 @@ Returns:
 
 - [Any](core_package_interfaces.md#interface-any) - The representation of `e`.
 
-<!--DelEnd-->
 ## struct LibC
 
 ```cangjie
